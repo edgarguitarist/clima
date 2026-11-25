@@ -1,0 +1,83 @@
+<!doctype html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<link rel="stylesheet" href="leaflet.css">
+<script src="leaflet.js"></script>
+<style>
+ html,body,#m{margin:0;height:100%;background:#0b1220}
+ #b{position:absolute;z-index:1000;left:8px;right:8px;bottom:12px;background:#0b1220e6;color:#fff;
+    padding:8px;border-radius:14px;font:14px system-ui}
+ .f{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+ button{background:#1e293b;color:#fff;border:0;border-radius:9px;padding:8px 10px;font:inherit}
+ button.on{background:#2563eb}
+ #t{flex:1;text-align:right;font-variant-numeric:tabular-nums}
+ #ley{margin-top:6px;font-size:11px;color:#94a3b8}
+ .leaflet-control-attribution{font-size:9px}
+</style></head>
+<body><div id="m"></div>
+<div id="b">
+  <div class="f">
+    <button id="pp">⏸</button>
+    <button id="ra" class="on">Radar</button>
+    <button id="sa" class="on">Lluvia sat.</button>
+    <button id="nu" class="on">Nubes</button>
+    <span id="t"></span>
+  </div>
+  <div id="ley"></div>
+</div>
+<script>
+// La app reemplaza __LAT__ y __LON__ antes de cargar la página.
+const LAT = __LAT__, LON = __LON__;
+const m = L.map('m', {zoomControl: false}).setView([LAT, LON], 7);
+// Base oscura de Esri (gratis, sin key; CARTO empezó a exigir API key). Los nombres van en una capa
+// aparte por encima de las nubes y la lluvia, para que se lean siempre.
+const esri = (s) => `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/${s}/MapServer/tile/{z}/{y}/{x}`;
+L.tileLayer(esri('World_Dark_Gray_Base'), {attribution: '© Esri', maxZoom: 12, maxNativeZoom: 16}).addTo(m);
+m.createPane('nombres').style.zIndex = 650;
+m.getPane('nombres').style.pointerEvents = 'none';
+L.tileLayer(esri('World_Dark_Gray_Reference'), {pane: 'nombres', maxZoom: 12}).addTo(m);
+const gibs = (capa, nivel, ext) =>
+  `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${capa}/default/default/GoogleMapsCompatible_Level${nivel}/{z}/{y}/{x}.${ext}`;
+
+// Nubes: satélite GOES-East GeoColor (cada 10 min, cubre América; de noche mezcla el infrarrojo).
+const nubes = L.tileLayer(gibs('GOES-East_ABI_GeoColor', 7, 'jpeg'),
+  {maxNativeZoom: 7, maxZoom: 12, opacity: .55, attribution: 'NASA GIBS'}).addTo(m);
+// Lluvia por satélite: NASA IMERG cada 30 min, global. Cubre donde no hay radares en tierra (casi todo Ecuador).
+const sat = L.tileLayer(gibs('IMERG_Precipitation_Rate_30min', 6, 'png'),
+  {maxNativeZoom: 6, maxZoom: 12, opacity: .75}).addTo(m);
+L.circleMarker([LAT, LON], {radius: 7, color: '#fff', weight: 2, fillColor: '#2563eb', fillOpacity: 1}).addTo(m);
+
+// Radar: RainViewer, últimas 2 h cada 10 min, animado.
+let frames = [], capas = [], i = 0, play = true, radarOn = true;
+const t = document.getElementById('t');
+fetch('https://api.rainviewer.com/public/weather-maps.json').then(r => r.json()).then(j => {
+  frames = j.radar.past;
+  capas = frames.map(f => L.tileLayer(j.host + f.path + '/256/{z}/{x}/{y}/2/1_1.png',
+    {maxNativeZoom: 7, maxZoom: 12, opacity: 0, attribution: 'RainViewer'}).addTo(m));
+  i = frames.length - 1; mostrar();
+  setInterval(() => { if (play && frames.length) { i = (i + 1) % frames.length; mostrar(); } }, 700);
+}).catch(() => { t.textContent = 'Radar no disponible'; });
+
+function mostrar() {
+  capas.forEach((c, k) => c.setOpacity(radarOn && k === i ? .8 : 0));
+  if (!frames.length) return;
+  const d = new Date(frames[i].time * 1000);
+  t.textContent = (i === frames.length - 1 ? 'Ahora · ' : '') +
+    d.toLocaleTimeString('es', {hour: '2-digit', minute: '2-digit'});
+}
+const alternar = (btn, capa) => btn.onclick = () => {
+  m.hasLayer(capa) ? m.removeLayer(capa) : capa.addTo(m); btn.classList.toggle('on'); leyenda();
+};
+alternar(nu, nubes); alternar(sa, sat);
+pp.onclick = () => { play = !play; pp.textContent = play ? '⏸' : '▶'; if (!play) { i = frames.length - 1; mostrar(); } };
+ra.onclick = () => { radarOn = !radarOn; ra.classList.toggle('on'); mostrar(); leyenda(); };
+function leyenda() {
+  const p = [];
+  if (radarOn) p.push('Radar: lluvia de radares en tierra (azul débil → rojo fuerte)');
+  if (m.hasLayer(sat)) p.push('Lluvia sat.: estimación NASA, también donde no hay radar');
+  if (m.hasLayer(nubes)) p.push('Nubes: imagen real del satélite GOES');
+  document.getElementById('ley').textContent = p.join(' · ');
+}
+leyenda();
+</script></body></html>
