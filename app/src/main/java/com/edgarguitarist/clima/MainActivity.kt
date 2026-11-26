@@ -182,6 +182,7 @@ private fun App() {
             }
         }
     }
+    AvisoActualizacion()
 }
 
 @SuppressLint("SetJavaScriptEnabled")

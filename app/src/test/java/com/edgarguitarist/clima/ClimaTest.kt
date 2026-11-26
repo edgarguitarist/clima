@@ -27,6 +27,11 @@ class ClimaTest {
         assertEquals("SO", rumbo(225.0)); assertEquals("O", rumbo(-90.0))
     }
 
+    @Test fun versiones() {
+        assertTrue(Actualizador.comparar("0.1.10", "0.1.9") > 0)
+        assertEquals(0, Actualizador.comparar("0.2", "0.2.0"))
+    }
+
     @Test fun iconos() {
         assertEquals("🌙", icono(0, esDia = false))
         assertEquals("Lluvia", texto(63))

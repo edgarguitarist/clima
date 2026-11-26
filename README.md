@@ -15,6 +15,8 @@ App de Android (Kotlin + Jetpack Compose, mismo stack que Lince) con el clima de
 
 Sin permiso de ubicación muestra Guayaquil y lo dice junto al nombre.
 
+Al abrir, avisa si hay una versión nueva en los [releases](https://github.com/edgarguitarist/clima/releases) de GitHub, la baja y abre el instalador (igual que Lince). «Ahora no» la vuelve a ofrecer al día siguiente.
+
 ## Fuentes (todas gratis y sin API key)
 
 | Qué | Fuente |
@@ -44,9 +46,20 @@ prefijo `CLIMA_`); si no, con la debug.
 | Archivo | Qué hace |
 |---|---|
 | `Clima.kt` | Pide y parsea el pronóstico de Open-Meteo; textos e íconos de los códigos WMO |
+| `Actualizador.kt` | Aviso de versión nueva desde los releases de GitHub |
 | `Ubicacion.kt` | Ubicación actual y nombre del lugar |
 | `MainActivity.kt` | Pantallas: pronóstico y mapa |
 | `assets/mapa.html` | El mapa (Leaflet embebido, en un WebView) |
+
+## Publicar una versión
+
+Subir `versionCode` y `versionName` en `app/build.gradle.kts`, compilar y:
+
+```bash
+gh release create vX.Y.Z app/build/outputs/apk/release/app-release.apk#Clima-X.Y.Z.apk --notes "qué cambió"
+```
+
+El release debe quedar firmado con la misma llave (la de Lince), o Android no deja actualizar encima.
 
 ## Diagnóstico
 
