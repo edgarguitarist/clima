@@ -6,12 +6,16 @@ App de Android (Kotlin + Jetpack Compose, mismo stack que Lince) con el clima de
   nubosidad, lluvia, índice UV, presión, visibilidad, salida y puesta del sol.
 - **Próximas 2 horas cada 15 min**: milímetros de lluvia y probabilidad.
 - **24 horas** (temperatura, sensación, probabilidad de lluvia, nubosidad) y **10 días**.
-- **Mapa «Radar y nubes»**, animado, con tres capas que se prenden y apagan:
-  - **Radar**: lluvia de radares en tierra, últimas 2 h cada 10 min (RainViewer).
-  - **Lluvia sat.**: estimación de lluvia de la NASA (IMERG, cada 30 min, resolución ~10 km). Cubre donde no hay
-    radar, que es casi todo Ecuador.
-  - **Nubes**: imagen real del satélite GOES-East (cada 10 min; de noche, infrarrojo). Cubre América.
-- Se actualiza sola cada 10 min y al volver a la app; también deslizando hacia abajo.
+- **Mapa «Radar y nubes»**, con cuatro capas que se prenden y apagan:
+  - **Tormentas** (encendida): infrarrojo del satélite GOES-East cada 10 min (~30 min de retraso). Los topes de nube
+    bajo -38 °C son tormentas donde casi seguro llueve; la app traduce la paleta de la NASA a temperatura y la repinta
+    con colores de lluvia (más frío = más fuerte). Es lo único al día en Ecuador, donde no hay radares públicos.
+  - **Radar** (encendida, animada): lluvia de radares en tierra, últimas 2 h cada 10 min (RainViewer).
+  - **Nubes**: foto real del satélite GOES-East (GeoColor; de noche, infrarrojo).
+  - **Lluvia NASA** (IMERG): estimación más exacta, pero llega con ~5 h de retraso y en celdas de ~10 km; se
+    desenfoca según el zoom para que no se vean cuadros. Muestra la hora de los datos.
+- Se actualiza sola cada 10 min y al volver a la app; también deslizando hacia abajo. Al abrir muestra al instante
+  el último pronóstico guardado mientras baja el nuevo, y reintenta 3 veces si la red se cuelga.
 
 Sin permiso de ubicación muestra Guayaquil y lo dice junto al nombre.
 

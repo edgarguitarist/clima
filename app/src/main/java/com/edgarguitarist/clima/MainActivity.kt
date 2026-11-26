@@ -2,6 +2,7 @@ package com.edgarguitarist.clima
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.webkit.WebView
@@ -11,7 +12,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -19,11 +24,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -43,9 +50,20 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -55,10 +73,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.edgarguitarist.clima.ui.Ambar
-import com.edgarguitarist.clima.ui.Azul
 import com.edgarguitarist.clima.ui.Celeste
 import com.edgarguitarist.clima.ui.Fondo
-import com.edgarguitarist.clima.ui.Superficie
 import com.edgarguitarist.clima.ui.TemaClima
 import com.edgarguitarist.clima.ui.TextoSec
 import kotlinx.coroutines.Dispatchers
@@ -72,6 +88,9 @@ import kotlin.math.roundToInt
 
 private const val GYE_LAT = -2.19 // si no hay permiso de ubicación: Guayaquil
 private const val GYE_LON = -79.89
+
+private val Vidrio = Color(0x14FFFFFF) // tarjetas translúcidas sobre el degradado
+private val Borde = Color(0x1AFFFFFF)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -89,13 +108,28 @@ private class Estado {
     var datos by mutableStateOf<Pronostico?>(null)
     var error by mutableStateOf("")
     var cargando by mutableStateOf(false)
+    var etapa by mutableStateOf("")
+}
+
+/** El último pronóstico bajado: se muestra al instante al abrir, mientras llega el nuevo. */
+private fun cache(ctx: Context) = ctx.getSharedPreferences("cache", Context.MODE_PRIVATE)
+
+private fun leerCache(ctx: Context, e: Estado) {
+    val c = cache(ctx)
+    val json = c.getString("json", null) ?: return
+    runCatching { parsear(json) }.onSuccess {
+        e.datos = it
+        e.lugar = c.getString("lugar", "") ?: ""
+        e.lat = c.getFloat("lat", 0f).toDouble()
+        e.lon = c.getFloat("lon", 0f).toDouble()
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun App() {
     val ctx = LocalContext.current
-    val e = remember { Estado() }
+    val e = remember { Estado().also { leerCache(ctx, it) } }
     val scope = rememberCoroutineScope()
     var pestana by rememberSaveable { mutableStateOf(0) }
     var permisoResuelto by remember { mutableStateOf(false) }
@@ -107,22 +141,29 @@ private fun App() {
         try {
             val conPermiso = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_COARSE_LOCATION) ==
                 PackageManager.PERMISSION_GRANTED
+            e.etapa = "Buscando tu ubicación…"
             val pos = if (conPermiso) ubicacionActual(ctx) else null
             val lat = pos?.latitude ?: GYE_LAT
             val lon = pos?.longitude ?: GYE_LON
+            e.etapa = "Descargando el pronóstico…"
+            val json = withContext(Dispatchers.IO) { descargarPronostico(lat, lon) }
+            e.datos = parsear(json)
             e.lat = lat
             e.lon = lon
-            e.datos = withContext(Dispatchers.IO) { obtenerPronostico(lat, lon) }
+            // El nombre llega después: el pronóstico ya se ve mientras el Geocoder responde.
             val nombre = nombreLugar(ctx, lat, lon) ?: "Mi ubicación"
             e.lugar = when {
-                !conPermiso -> "$nombre (sin permiso de ubicación)"
-                pos == null -> "$nombre (sin señal de ubicación)"
+                !conPermiso -> "$nombre · sin permiso de ubicación"
+                pos == null -> "$nombre · sin señal de ubicación"
                 else -> nombre
             }
+            cache(ctx).edit().putString("json", json).putString("lugar", e.lugar)
+                .putFloat("lat", lat.toFloat()).putFloat("lon", lon.toFloat()).apply()
         } catch (x: Exception) {
-            e.error = x.message ?: x.toString()
+            e.error = mensajeError(x)
         } finally {
             e.cargando = false
+            e.etapa = ""
         }
     }
 
@@ -144,45 +185,85 @@ private fun App() {
         }
     }
 
-    Column(Modifier.fillMaxSize().background(Fondo).safeDrawingPadding()) {
-        Row(
-            Modifier.padding(12.dp).fillMaxWidth().background(Superficie, RoundedCornerShape(12.dp)).padding(4.dp),
-        ) {
-            listOf("Pronóstico", "Radar y nubes").forEachIndexed { i, t ->
-                Box(
-                    Modifier.weight(1f)
-                        .background(if (pestana == i) Azul else Color.Transparent, RoundedCornerShape(10.dp))
-                        .clickable { pestana = i }.padding(10.dp),
-                    contentAlignment = Alignment.Center,
-                ) { Text(t, fontWeight = FontWeight.SemiBold, color = Color.White) }
-            }
-        }
-        val lat = e.lat
-        val lon = e.lon
-        if (pestana == 1 && lat != null && lon != null) {
-            Mapa(lat, lon)
-        } else {
-            PullToRefreshBox(isRefreshing = e.cargando, onRefresh = { scope.launch { cargar() } }) {
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-                    if (e.error.isNotEmpty()) {
-                        Text("No se pudo cargar: ${e.error}. Desliza hacia abajo para reintentar.", color = Color(0xFFFCA5A5))
-                    }
-                    val d = e.datos
-                    if (d == null) {
-                        if (e.error.isEmpty()) {
-                            Box(Modifier.fillMaxWidth().padding(top = 80.dp), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator()
-                            }
+    val d = e.datos
+    val colores = fondo(d?.actual)
+    val arriba by animateColorAsState(colores.first, tween(800), label = "fondo")
+    val medio by animateColorAsState(colores.second, tween(800), label = "fondo2")
+    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(arriba, medio, Fondo)))) {
+        Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+            Pestanas(pestana) { pestana = it }
+            if (pestana == 1) {
+                Mapa(e.lat ?: GYE_LAT, e.lon ?: GYE_LON)
+            } else {
+                PullToRefreshBox(isRefreshing = e.cargando && d != null, onRefresh = { scope.launch { cargar() } }) {
+                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+                        if (d == null) {
+                            Cargando(e.etapa, e.error)
+                        } else {
+                            if (e.error.isNotEmpty()) Aviso("No se pudo actualizar: ${e.error}. Desliza hacia abajo para reintentar.")
+                            Detalle(d, e.lugar)
                         }
-                    } else {
-                        Detalle(d, e.lugar)
+                        Spacer(Modifier.height(24.dp))
                     }
-                    Spacer(Modifier.height(24.dp))
                 }
             }
         }
     }
     AvisoActualizacion()
+}
+
+/** Colores del degradado de fondo según el cielo: azul de día, índigo de noche, gris con lluvia o nubes. */
+private fun fondo(a: Actual?): Pair<Color, Color> = when {
+    a == null -> Color(0xFF1E3A8A) to Color(0xFF172554)
+    a.codigo >= 51 -> if (a.esDia) Color(0xFF334155) to Color(0xFF1E293B) else Color(0xFF1E293B) to Color(0xFF0F172A)
+    !a.esDia -> Color(0xFF1E1B4B) to Color(0xFF0F172A)
+    a.codigo >= 3 -> Color(0xFF3B5578) to Color(0xFF1E2F4A)
+    else -> Color(0xFF2563EB) to Color(0xFF1E3A8A)
+}
+
+@Composable
+private fun Pestanas(actual: Int, elegir: (Int) -> Unit) {
+    Row(
+        Modifier.padding(horizontal = 16.dp, vertical = 10.dp).fillMaxWidth()
+            .background(Color(0x33000000), RoundedCornerShape(50)).padding(4.dp),
+    ) {
+        listOf("Pronóstico", "Radar y nubes").forEachIndexed { i, t ->
+            Box(
+                Modifier.weight(1f).clip(RoundedCornerShape(50))
+                    .background(if (actual == i) Color.White else Color.Transparent)
+                    .clickable { elegir(i) }.padding(vertical = 9.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    t, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+                    color = if (actual == i) Fondo else Color.White.copy(alpha = .8f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun Cargando(etapa: String, error: String) {
+    Column(Modifier.fillMaxWidth().padding(top = 120.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (error.isEmpty()) {
+            CircularProgressIndicator(color = Color.White, strokeWidth = 3.dp, modifier = Modifier.size(40.dp))
+            Text(etapa.ifEmpty { "Cargando…" }, color = TextoSec, modifier = Modifier.padding(top = 16.dp))
+        } else {
+            Text("☁️", fontSize = 56.sp)
+            Text("No se pudo cargar el pronóstico", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
+            Text("$error.\nDesliza hacia abajo para reintentar.", color = TextoSec, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
+        }
+    }
+}
+
+@Composable
+private fun Aviso(texto: String) {
+    Text(
+        texto, color = Color(0xFFFECACA), fontSize = 13.sp,
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+            .background(Color(0x33EF4444), RoundedCornerShape(12.dp)).padding(10.dp),
+    )
 }
 
 @SuppressLint("SetJavaScriptEnabled")
@@ -215,91 +296,211 @@ private val formatoDia = DateTimeFormatter.ofPattern("EEE d", Locale("es"))
 @Composable
 private fun Detalle(p: Pronostico, lugar: String) {
     val a = p.actual
-    Text(lugar, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-    Text("Actualizado ${hora(a.hora)} (hora local)", color = TextoSec, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-    Text(icono(a.codigo, a.esDia), fontSize = 64.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
-    Text("${r(a.temp)}°", fontSize = 88.sp, fontWeight = FontWeight.ExtraLight, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-    Text(texto(a.codigo), fontSize = 20.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-    Text(
-        "Sensación térmica ${r(a.sensacion)}°", color = Ambar, fontSize = 17.sp, textAlign = TextAlign.Center,
-        modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
-    )
-
-    Tarjeta("Próximas 2 horas · cada 15 min") {
-        Text(if (p.cuartos.any { it.lluvia > 0 }) "Se espera lluvia" else "Sin lluvia prevista")
-        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            p.cuartos.forEach {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(hora(it.hora), color = TextoSec, fontSize = 11.sp)
-                    Text("%.1f".format(it.lluvia), fontSize = 15.sp)
-                    Text("${it.prob}%", color = Celeste, fontSize = 11.sp)
-                }
-            }
+    val hoy = p.dias[0]
+    // Encabezado
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("📍 ${lugar.ifEmpty { "Mi ubicación" }}", fontSize = 17.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
+        Text(icono(a.codigo, a.esDia), fontSize = 76.sp, modifier = Modifier.padding(top = 12.dp))
+        Text("${r(a.temp)}°", fontSize = 104.sp, fontWeight = FontWeight.Thin, lineHeight = 104.sp)
+        Text(texto(a.codigo), fontSize = 21.sp, fontWeight = FontWeight.Medium)
+        Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("Sensación ${r(a.sensacion)}°", Ambar)
+            Chip("↑ ${r(hoy.max)}°  ↓ ${r(hoy.min)}°", Color.White)
         }
-        Text("mm de lluvia y probabilidad", color = TextoSec, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+        Text(
+            "Actualizado a las ${hora(a.hora)}", color = Color.White.copy(alpha = .55f), fontSize = 12.sp,
+            modifier = Modifier.padding(top = 10.dp),
+        )
     }
 
-    val datos = listOf(
-        "Humedad" to "${a.humedad}%",
-        "Punto de rocío" to "${r(a.rocio)}°",
-        "Viento" to "${r(a.viento)} km/h ${rumbo(a.dirViento)}",
-        "Ráfagas" to "${r(a.rafagas)} km/h",
-        "Nubosidad" to "${a.nubes}%",
-        "Lluvia ahora" to "${a.lluvia} mm",
-        "Índice UV" to "%.1f · %s".format(a.uv, nivelUV(a.uv)),
-        "Presión" to "${r(a.presion)} hPa",
-        "Visibilidad" to "%.1f km".format(a.visibilidad / 1000),
-        "Sol" to "${hora(p.dias[0].amanecer)} – ${hora(p.dias[0].atardecer)}",
+    Tarjeta("🌧️  Lluvia · próximas 2 horas") {
+        Text(resumenLluvia(p.cuartos), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        BarrasLluvia(p.cuartos)
+    }
+
+    Tarjeta("🕒  Próximas 24 horas") { Horas(p.horas) }
+
+    Tarjeta("📅  Próximos 10 días") { Dias(p.dias) }
+
+    val celdas = listOf(
+        Triple("💧 Humedad", "${a.humedad}%", "Punto de rocío ${r(a.rocio)}°"),
+        Triple("🌬️ Viento", "${r(a.viento)} km/h", "Ráfagas ${r(a.rafagas)} km/h"),
+        Triple("☀️ Índice UV", "%.1f".format(a.uv), "${nivelUV(a.uv)} · máx. hoy %.0f".format(hoy.uvMax)),
+        Triple("☁️ Nubosidad", "${a.nubes}%", if (a.lluvia > 0) "Lloviendo ${a.lluvia} mm" else "Sin lluvia ahora"),
+        Triple("🌡️ Presión", "${r(a.presion)} hPa", "Al nivel del mar"),
+        Triple("👁️ Visibilidad", "%.0f km".format(a.visibilidad / 1000), if (a.visibilidad < 5000) "Reducida" else "Buena"),
+        Triple("🌅 Amanecer", hora(hoy.amanecer), "Atardecer ${hora(hoy.atardecer)}"),
+        Triple("☔ Lluvia hoy", "%.1f mm".format(hoy.lluvia), "Probabilidad ${hoy.prob}%"),
     )
-    datos.chunked(2).forEach { fila ->
-        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            fila.forEach { (t, v) ->
-                Column(Modifier.weight(1f).background(Superficie, RoundedCornerShape(14.dp)).padding(12.dp)) {
+    celdas.chunked(2).forEach { fila ->
+        Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            fila.forEach { (t, v, sub) ->
+                Column(
+                    Modifier.weight(1f).clip(RoundedCornerShape(20.dp)).background(Vidrio)
+                        .border(1.dp, Borde, RoundedCornerShape(20.dp)).padding(14.dp),
+                ) {
                     Text(t, color = TextoSec, fontSize = 12.sp)
-                    Text(v, fontSize = 16.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(v, fontSize = 24.sp, fontWeight = FontWeight.Light, modifier = Modifier.padding(vertical = 4.dp))
+                        if (t.endsWith("Viento")) {
+                            // La flecha apunta hacia donde va el viento (la dirección dice de dónde viene).
+                            Text("↑", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Celeste, modifier = Modifier.padding(start = 8.dp).rotate((a.dirViento + 180).toFloat()))
+                            Text(rumbo(a.dirViento), fontSize = 13.sp, color = TextoSec, modifier = Modifier.padding(start = 2.dp))
+                        }
+                    }
+                    Text(sub, color = TextoSec, fontSize = 12.sp)
                 }
-            }
-        }
-    }
-
-    Tarjeta("Próximas 24 horas") {
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-            p.horas.forEachIndexed { i, h ->
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(if (i == 0) "Ahora" else hora(h.hora), color = TextoSec, fontSize = 12.sp)
-                    Text(icono(h.codigo), fontSize = 22.sp)
-                    Text("${r(h.temp)}°", fontSize = 16.sp)
-                    Text("ST ${r(h.sensacion)}°", color = Ambar, fontSize = 11.sp)
-                    Text("💧${h.prob}%", color = Celeste, fontSize = 11.sp)
-                    Text("☁️${h.nubes}%", color = TextoSec, fontSize = 11.sp)
-                }
-            }
-        }
-        Text("ST = sensación térmica", color = TextoSec, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
-    }
-
-    Tarjeta("Próximos 10 días") {
-        p.dias.forEachIndexed { i, d ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(if (i == 0) "Hoy" else LocalDate.parse(d.fecha).format(formatoDia), modifier = Modifier.width(64.dp))
-                Text(icono(d.codigo), fontSize = 20.sp, modifier = Modifier.width(34.dp))
-                Text("💧${d.prob}%", color = Celeste, fontSize = 12.sp, modifier = Modifier.width(56.dp))
-                Text("${r(d.min)}° / ${r(d.max)}°", modifier = Modifier.weight(1f), textAlign = TextAlign.End)
-                Text("ST ${r(d.sensMax)}°", color = Ambar, fontSize = 12.sp, textAlign = TextAlign.End, modifier = Modifier.width(60.dp))
             }
         }
     }
     Text(
-        "Datos: Open-Meteo · Radar: RainViewer · Satélite: NASA GIBS",
-        color = Color(0xFF475569), fontSize = 11.sp, textAlign = TextAlign.Center,
-        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+        "Pronóstico: Open-Meteo (ECMWF, GFS, ICON…) · Radar: RainViewer · Satélite: NASA GIBS",
+        color = Color.White.copy(alpha = .35f), fontSize = 11.sp, textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth().padding(top = 18.dp),
+    )
+}
+
+@Composable
+private fun Chip(texto: String, color: Color) {
+    Text(
+        texto, color = color, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+        modifier = Modifier.clip(RoundedCornerShape(50)).background(Color(0x26FFFFFF)).padding(horizontal = 14.dp, vertical = 6.dp),
     )
 }
 
 @Composable
 private fun Tarjeta(titulo: String, contenido: @Composable () -> Unit) {
-    Column(Modifier.padding(top = 12.dp).fillMaxWidth().background(Superficie, RoundedCornerShape(16.dp)).padding(14.dp)) {
-        Text(titulo.uppercase(), color = TextoSec, fontSize = 12.sp, modifier = Modifier.padding(bottom = 8.dp))
+    Column(
+        Modifier.padding(top = 14.dp).fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Vidrio)
+            .border(1.dp, Borde, RoundedCornerShape(22.dp)).padding(16.dp),
+    ) {
+        Text(titulo, color = TextoSec, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(bottom = 10.dp))
         contenido()
+    }
+}
+
+/** Barras de lluvia cada 15 min: el alto son los mm, la intensidad del color la probabilidad. */
+@Composable
+private fun BarrasLluvia(cuartos: List<Cuarto>) {
+    val maximo = maxOf(1.0, cuartos.maxOfOrNull { it.lluvia } ?: 0.0)
+    Row(Modifier.fillMaxWidth().height(70.dp).padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Bottom) {
+        cuartos.forEach { c ->
+            Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Bottom) {
+                val alto = (c.lluvia / maximo).toFloat().coerceIn(0.06f, 1f)
+                Box(
+                    Modifier.fillMaxWidth().fillMaxHeight(alto).clip(RoundedCornerShape(6.dp))
+                        .background(Celeste.copy(alpha = if (c.lluvia >= 0.1) .35f + .65f * c.prob / 100f else .15f)),
+                )
+            }
+        }
+    }
+    Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+        cuartos.forEachIndexed { i, c ->
+            Text(
+                if (i % 2 == 0) (if (i == 0) "Ahora" else hora(c.hora)) else "", color = TextoSec, fontSize = 11.sp,
+                modifier = Modifier.weight(1f), textAlign = TextAlign.Start,
+            )
+        }
+    }
+    Text(
+        "Máx. %.1f mm en 15 min · prob. hasta %d%%".format(cuartos.maxOfOrNull { it.lluvia } ?: 0.0, cuartos.maxOfOrNull { it.prob } ?: 0),
+        color = TextoSec, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp),
+    )
+}
+
+/** Las 24 horas: curva de temperatura y, debajo, la sensación térmica de cada hora. */
+@Composable
+private fun Horas(horas: List<Hora>) {
+    val ancho = 58.dp
+    val medidor = rememberTextMeasurer()
+    // La curva usa su propio rango (mínimo 4°) para que se note la forma del día aunque varíe poco.
+    val min = horas.minOf { it.temp }
+    val max = maxOf(horas.maxOf { it.temp }, min + 4)
+    Column(Modifier.horizontalScroll(rememberScrollState())) {
+        Row {
+            horas.forEachIndexed { i, h ->
+                Column(Modifier.width(ancho), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(if (i == 0) "Ahora" else hora(h.hora), color = TextoSec, fontSize = 12.sp)
+                    Text(icono(h.codigo, esDiaAprox(h.hora)), fontSize = 24.sp, modifier = Modifier.padding(vertical = 4.dp))
+                }
+            }
+        }
+        Canvas(Modifier.width(ancho * horas.size).height(96.dp)) {
+            val paso = size.width / horas.size
+            val arriba = 26.dp.toPx()
+            val abajo = size.height - 18.dp.toPx()
+            fun y(v: Double) = (abajo - (v - min) / (max - min) * (abajo - arriba)).toFloat()
+            fun curva(valor: (Hora) -> Double): Path = Path().apply {
+                horas.forEachIndexed { i, h ->
+                    val x = paso * i + paso / 2
+                    if (i == 0) moveTo(x, y(valor(h))) else {
+                        val xa = paso * (i - 1) + paso / 2
+                        val ya = y(valor(horas[i - 1]))
+                        cubicTo((xa + x) / 2, ya, (xa + x) / 2, y(valor(h)), x, y(valor(h)))
+                    }
+                }
+            }
+            val temp = curva { it.temp }
+            val relleno = Path().apply {
+                addPath(temp)
+                lineTo(size.width - paso / 2, size.height); lineTo(paso / 2, size.height); close()
+            }
+            drawPath(relleno, Brush.verticalGradient(listOf(Color.White.copy(alpha = .18f), Color.Transparent)))
+            drawPath(temp, Color.White, style = Stroke(2.5.dp.toPx()))
+            horas.forEachIndexed { i, h ->
+                val x = paso * i + paso / 2
+                drawCircle(Color.White, 3.dp.toPx(), Offset(x, y(h.temp)))
+                val t = medidor.measure("${r(h.temp)}°", TextStyle(color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium))
+                drawText(t, topLeft = Offset(x - t.size.width / 2, y(h.temp) - t.size.height - 6.dp.toPx()))
+                val s = medidor.measure("ST ${r(h.sensacion)}°", TextStyle(color = Ambar, fontSize = 11.sp))
+                drawText(s, topLeft = Offset(x - s.size.width / 2, size.height - s.size.height))
+            }
+        }
+        Row(Modifier.padding(top = 4.dp)) {
+            horas.forEach { h ->
+                Text(
+                    if (h.prob > 0) "💧${h.prob}%" else "", color = Celeste, fontSize = 11.sp,
+                    textAlign = TextAlign.Center, modifier = Modifier.width(ancho),
+                )
+            }
+        }
+    }
+    Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(14.dp, 2.dp).background(Color.White))
+        Text(" Temperatura", color = TextoSec, fontSize = 11.sp)
+        Text("   ST", color = Ambar, fontSize = 11.sp)
+        Text(" sensación térmica", color = TextoSec, fontSize = 11.sp)
+    }
+}
+
+// Sin el amanecer de cada hora: de 6 a 18 es de día, suficiente cerca del ecuador para elegir sol o luna.
+private fun esDiaAprox(iso: String) = iso.substring(11, 13).toInt() in 6..17
+
+@Composable
+private fun Dias(dias: List<Dia>) {
+    val min = dias.minOf { it.min }
+    val max = dias.maxOf { it.max }
+    dias.forEachIndexed { i, d ->
+        Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.width(64.dp)) {
+                Text(if (i == 0) "Hoy" else LocalDate.parse(d.fecha).format(formatoDia).replaceFirstChar { it.uppercase() }, fontSize = 15.sp)
+                Text("ST ${r(d.sensMax)}°", color = Ambar, fontSize = 11.sp)
+            }
+            Text(icono(d.codigo), fontSize = 22.sp, modifier = Modifier.width(34.dp))
+            Text(if (d.prob >= 10) "${d.prob}%" else "", color = Celeste, fontSize = 12.sp, modifier = Modifier.width(38.dp))
+            Text("${r(d.min)}°", color = TextoSec, fontSize = 15.sp, textAlign = TextAlign.End, modifier = Modifier.width(34.dp))
+            Canvas(Modifier.weight(1f).height(6.dp).padding(horizontal = 10.dp)) {
+                val rango = (max - min).coerceAtLeast(1.0)
+                val x0 = ((d.min - min) / rango * size.width).toFloat()
+                val x1 = ((d.max - min) / rango * size.width).toFloat()
+                val radio = CornerRadius(size.height / 2)
+                drawRoundRect(Color(0x26FFFFFF), cornerRadius = radio)
+                drawRoundRect(
+                    Brush.horizontalGradient(listOf(Celeste, Ambar), startX = 0f, endX = size.width),
+                    topLeft = Offset(x0, 0f), size = Size((x1 - x0).coerceAtLeast(size.height), size.height), cornerRadius = radio,
+                )
+            }
+            Text("${r(d.max)}°", fontSize = 15.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.End, modifier = Modifier.width(34.dp))
+        }
     }
 }

@@ -17,18 +17,19 @@ import kotlin.coroutines.resume
 
 // Solo con el LocationManager del sistema: sin Google Play Services, así anda en cualquier Android.
 
-/** Ubicación actual, o null si no hay permiso o no llega en 15 s. */
+/** Ubicación actual, o null si no hay permiso o no llega en 10 s. */
 @SuppressLint("MissingPermission") // el permiso lo pide MainActivity antes de llamar
 suspend fun ubicacionActual(ctx: Context): Location? {
     val lm = ctx.getSystemService(LocationManager::class.java)
     val proveedores = lm.getProviders(true)
-    // Una posición de hace menos de 10 min sirve: el pronóstico tiene resolución de kilómetros.
+    // Una posición de hace menos de 30 min sirve: el pronóstico tiene resolución de kilómetros, y esperar
+    // un GPS nuevo bajo techo puede tardar mucho.
     proveedores.mapNotNull { lm.getLastKnownLocation(it) }
-        .filter { System.currentTimeMillis() - it.time < 10 * 60_000 }
+        .filter { System.currentTimeMillis() - it.time < 30 * 60_000 }
         .minByOrNull { it.accuracy }?.let { return it }
     val proveedor = listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER, LocationManager.FUSED_PROVIDER)
         .firstOrNull { it in proveedores } ?: return proveedores.firstNotNullOfOrNull { lm.getLastKnownLocation(it) }
-    return withTimeoutOrNull(15_000) {
+    return withTimeoutOrNull(10_000) {
         suspendCancellableCoroutine { cont ->
             val cancelar = CancellationSignal()
             cont.invokeOnCancellation { cancelar.cancel() }

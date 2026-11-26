@@ -32,19 +32,48 @@ private const val HORARIO = "temperature_2m,apparent_temperature,precipitation_p
 private const val DIARIO = "weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max," +
     "apparent_temperature_min,precipitation_sum,precipitation_probability_max,sunrise,sunset,uv_index_max"
 
-/** Bloqueante: llamar desde Dispatchers.IO. */
-fun obtenerPronostico(lat: Double, lon: Double): Pronostico {
+/** Bloqueante: llamar desde Dispatchers.IO. Devuelve el JSON tal cual, para guardarlo en caché. */
+fun descargarPronostico(lat: Double, lon: Double): String {
     val url = "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=$ACTUAL" +
         "&minutely_15=precipitation,precipitation_probability&forecast_minutely_15=8" +
         "&hourly=$HORARIO&forecast_hours=48&daily=$DIARIO&forecast_days=10&timezone=auto"
-    val c = URL(url).openConnection() as HttpURLConnection
-    c.connectTimeout = 15_000
-    c.readTimeout = 15_000
-    try {
-        if (c.responseCode != 200) error("Open-Meteo respondió ${c.responseCode}")
-        return parsear(c.inputStream.bufferedReader().use { it.readText() })
-    } finally {
-        c.disconnect()
+    // Con datos móviles una petición se queda colgada de vez en cuando: se reintenta antes de rendirse.
+    var ultimo: Exception? = null
+    repeat(3) { intento ->
+        val c = URL(url).openConnection() as HttpURLConnection
+        c.connectTimeout = 10_000
+        c.readTimeout = 12_000
+        try {
+            if (c.responseCode != 200) error("Open-Meteo respondió ${c.responseCode}")
+            return c.inputStream.bufferedReader().use { it.readText() }
+        } catch (e: Exception) {
+            ultimo = e
+            Thread.sleep(1_000L * (intento + 1))
+        } finally {
+            c.disconnect()
+        }
+    }
+    throw ultimo!!
+}
+
+/** Para mostrar: «timeout» o «Unable to resolve host» no le dicen nada a nadie. */
+fun mensajeError(e: Exception): String = when (e) {
+    is java.net.UnknownHostException -> "Sin conexión a internet"
+    is java.net.SocketTimeoutException -> "El servidor del pronóstico tardó demasiado en responder"
+    is java.io.IOException -> "Falló la conexión (${e.message ?: e.javaClass.simpleName})"
+    else -> e.message ?: e.toString()
+}
+
+/** Resumen de la lluvia de las próximas 2 horas, a partir de los cuartos de hora. */
+fun resumenLluvia(cuartos: List<Cuarto>): String {
+    val llueve = cuartos.map { it.lluvia >= 0.1 }
+    val hhmm = { c: Cuarto -> c.hora.substring(11, 16) }
+    return when {
+        llueve.isEmpty() || llueve.none { it } ->
+            if (cuartos.any { it.prob >= 40 }) "Puede llover en las próximas 2 horas" else "Sin lluvia en las próximas 2 horas"
+        llueve.all { it } -> "Lluvia durante las próximas 2 horas"
+        llueve.first() -> "Lluvia hasta las ${hhmm(cuartos[llueve.indexOf(false)])}"
+        else -> "Lluvia desde las ${hhmm(cuartos[llueve.indexOf(true)])}"
     }
 }
 
@@ -112,8 +141,12 @@ private val CODIGOS = mapOf(
 )
 
 fun texto(codigo: Int) = CODIGOS[codigo]?.first ?: "Desconocido"
-fun icono(codigo: Int, esDia: Boolean = true) =
-    if (!esDia && codigo <= 1) "🌙" else CODIGOS[codigo]?.second ?: "❔"
+fun icono(codigo: Int, esDia: Boolean = true): String {
+    val i = CODIGOS[codigo]?.second ?: "❔"
+    if (esDia) return i
+    // De noche, nada de sol: luna si está despejado y la versión sin sol del resto.
+    return when (i) { "☀️", "🌤️" -> "🌙"; "⛅" -> "☁️"; "🌦️" -> "🌧️"; else -> i }
+}
 
 fun rumbo(grados: Double): String =
     listOf("N", "NE", "E", "SE", "S", "SO", "O", "NO")[(((grados % 360 + 360) % 360) / 45).roundToInt() % 8]

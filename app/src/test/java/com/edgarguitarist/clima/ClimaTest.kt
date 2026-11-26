@@ -32,8 +32,17 @@ class ClimaTest {
         assertEquals(0, Actualizador.comparar("0.2", "0.2.0"))
     }
 
+    @Test fun lluvia() {
+        fun c(vararg mm: Double) = mm.mapIndexed { i, v -> Cuarto("2026-11-25T20:%02d".format(i * 15 % 60), v, 50) }
+        assertEquals("Puede llover en las próximas 2 horas", resumenLluvia(c(0.0, 0.0)))
+        assertEquals("Lluvia hasta las 20:30", resumenLluvia(c(0.5, 0.2, 0.0, 0.0)))
+        assertEquals("Lluvia desde las 20:15", resumenLluvia(c(0.0, 0.3, 0.4)))
+        assertEquals("Lluvia durante las próximas 2 horas", resumenLluvia(c(1.0, 1.0)))
+    }
+
     @Test fun iconos() {
         assertEquals("🌙", icono(0, esDia = false))
+        assertEquals("🌧️", icono(80, esDia = false))
         assertEquals("Lluvia", texto(63))
     }
 }

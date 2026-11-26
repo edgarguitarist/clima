@@ -6,78 +6,221 @@
 <script src="leaflet.js"></script>
 <style>
  html,body,#m{margin:0;height:100%;background:#0b1220}
- #b{position:absolute;z-index:1000;left:8px;right:8px;bottom:12px;background:#0b1220e6;color:#fff;
-    padding:8px;border-radius:14px;font:14px system-ui}
- .f{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
- button{background:#1e293b;color:#fff;border:0;border-radius:9px;padding:8px 10px;font:inherit}
- button.on{background:#2563eb}
- #t{flex:1;text-align:right;font-variant-numeric:tabular-nums}
- #ley{margin-top:6px;font-size:11px;color:#94a3b8}
- .leaflet-control-attribution{font-size:9px}
+ body{font:14px system-ui,sans-serif;color:#fff}
+ #b{position:absolute;z-index:1000;left:10px;right:10px;bottom:14px;background:rgba(11,18,32,.88);
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.08);
+    padding:10px 12px;border-radius:18px;box-shadow:0 8px 24px rgba(0,0,0,.35)}
+ .f{display:flex;gap:6px;align-items:center}
+ .chips{overflow-x:auto;scrollbar-width:none;margin-top:8px}
+ .chips::-webkit-scrollbar{display:none}
+ button{background:rgba(255,255,255,.07);color:#cbd5e1;border:1px solid rgba(255,255,255,.1);border-radius:999px;
+    padding:6px 12px;font:13px system-ui,sans-serif;white-space:nowrap}
+ button.on{background:#2563eb;border-color:#3b82f6;color:#fff}
+ #pp{width:36px;height:36px;padding:0;border-radius:50%;background:#fff;color:#0b1220;font-size:14px;border:0;flex:none}
+ #t{font-weight:600;font-variant-numeric:tabular-nums}
+ #st{color:#94a3b8;font-size:12px}
+ #barra{flex:1;height:4px;background:rgba(255,255,255,.12);border-radius:2px;position:relative}
+ #prog{position:absolute;left:0;top:0;bottom:0;background:#60a5fa;border-radius:2px}
+ #ley{margin-top:8px;font-size:11px;color:#94a3b8;display:flex;align-items:center;gap:6px}
+ #esc{flex:1;height:6px;border-radius:3px;
+    background:linear-gradient(90deg,#60a5fa,#22c55e,#facc15,#f97316,#ef4444,#d946ef)}
+ #nota{margin-top:6px;font-size:11px;color:#64748b;line-height:1.35}
+ .leaflet-control-attribution{font-size:9px;background:rgba(11,18,32,.6)!important;color:#64748b}
+ .leaflet-control-attribution a{color:#64748b}
+ .yo{width:14px;height:14px;border-radius:50%;background:#3b82f6;border:3px solid #fff;
+    box-shadow:0 0 0 6px rgba(59,130,246,.3)}
 </style></head>
 <body><div id="m"></div>
 <div id="b">
   <div class="f">
-    <button id="pp">⏸</button>
-    <button id="ra" class="on">Radar</button>
-    <button id="sa" class="on">Lluvia sat.</button>
-    <button id="nu" class="on">Nubes</button>
-    <span id="t"></span>
+    <button id="pp">❚❚</button>
+    <div style="flex:1">
+      <div class="f"><span id="t">Cargando…</span><span id="st"></span></div>
+      <div class="f" style="margin-top:6px"><div id="barra"><div id="prog"></div></div></div>
+    </div>
   </div>
-  <div id="ley"></div>
+  <div class="f chips">
+    <button id="to" class="on">Tormentas</button>
+    <button id="ra" class="on">Radar</button>
+    <button id="nu">Nubes</button>
+    <button id="sa">Lluvia NASA</button>
+  </div>
+  <div id="ley"><span>Débil</span><div id="esc"></div><span>Fuerte</span></div>
+  <div id="nota"></div>
 </div>
 <script>
 // La app reemplaza __LAT__ y __LON__ antes de cargar la página.
 const LAT = __LAT__, LON = __LON__;
-const m = L.map('m', {zoomControl: false}).setView([LAT, LON], 7);
-// Base oscura de Esri (gratis, sin key; CARTO empezó a exigir API key). Los nombres van en una capa
-// aparte por encima de las nubes y la lluvia, para que se lean siempre.
+const m = L.map('m', {zoomControl: false}).setView([LAT, LON], 8);
+const $ = (id) => document.getElementById(id);
+const hhmm = (d) => d.toLocaleTimeString('es', {hour: '2-digit', minute: '2-digit'});
+
+// Base oscura de Esri (gratis, sin key). Los nombres van en una capa aparte, encima de todo.
 const esri = (s) => `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/${s}/MapServer/tile/{z}/{y}/{x}`;
 L.tileLayer(esri('World_Dark_Gray_Base'), {attribution: '© Esri', maxZoom: 12, maxNativeZoom: 16}).addTo(m);
 m.createPane('nombres').style.zIndex = 650;
 m.getPane('nombres').style.pointerEvents = 'none';
 L.tileLayer(esri('World_Dark_Gray_Reference'), {pane: 'nombres', maxZoom: 12}).addTo(m);
+L.marker([LAT, LON], {icon: L.divIcon({className: '', html: '<div class="yo"></div>', iconSize: [20, 20]}),
+  interactive: false, zIndexOffset: 1000}).addTo(m);
+
+const GIBS = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/';
 const gibs = (capa, nivel, ext) =>
-  `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${capa}/default/default/GoogleMapsCompatible_Level${nivel}/{z}/{y}/{x}.${ext}`;
+  `${GIBS}${capa}/default/default/GoogleMapsCompatible_Level${nivel}/{z}/{y}/{x}.${ext}`;
+const horas = {}; // hora real de cada capa satelital (cabecera Layer-Time-Actual de GIBS)
 
-// Nubes: satélite GOES-East GeoColor (cada 10 min, cubre América; de noche mezcla el infrarrojo).
+// Nubes: GOES-East GeoColor (cada 10 min, cubre América; de noche mezcla el infrarrojo).
 const nubes = L.tileLayer(gibs('GOES-East_ABI_GeoColor', 7, 'jpeg'),
-  {maxNativeZoom: 7, maxZoom: 12, opacity: .55, attribution: 'NASA GIBS'}).addTo(m);
-// Lluvia por satélite: NASA IMERG cada 30 min, global. Cubre donde no hay radares en tierra (casi todo Ecuador).
-const sat = L.tileLayer(gibs('IMERG_Precipitation_Rate_30min', 6, 'png'),
-  {maxNativeZoom: 6, maxZoom: 12, opacity: .75}).addTo(m);
-L.circleMarker([LAT, LON], {radius: 7, color: '#fff', weight: 2, fillColor: '#2563eb', fillOpacity: 1}).addTo(m);
+  {maxNativeZoom: 7, maxZoom: 12, opacity: .45, attribution: 'NASA GIBS'});
 
-// Radar: RainViewer, últimas 2 h cada 10 min, animado.
+// Lluvia NASA (IMERG): buena estimación, pero llega con ~5 h de retraso y en celdas de ~10 km.
+// Se desenfoca en proporción a lo que mide una celda en pantalla, para que no se vean cuadros.
+const sat = L.tileLayer(gibs('IMERG_Precipitation_Rate_30min', 6, 'png'), {maxNativeZoom: 6, maxZoom: 12, opacity: .6});
+const suavizar = () => { const c = sat.getContainer(); if (c) c.style.filter = `blur(${Math.round(2 ** m.getZoom() * .071 * .45)}px)`; };
+sat.on('add', suavizar); m.on('zoomend', suavizar);
+fetch(gibs('IMERG_Precipitation_Rate_30min', 6, 'png').replace('{z}', 4).replace('{y}', 8).replace('{x}', 4))
+  .then(r => { horas.sat = r.headers.get('layer-time-actual'); nota(); }).catch(() => {});
+
+// Tormentas: infrarrojo de GOES-East (banda 13, cada 10 min, ~30-40 min de retraso). Los topes de nube
+// más fríos son las tormentas: bajo -38 °C casi siempre llueve, y cuanto más fría, más fuerte.
+// GIBS lo pinta con su paleta; aquí se traduce cada color a temperatura y se repinta como lluvia.
+const PALETA = [[127,0,127,-91],[140,13,135,-90],[153,25,142,-89],[165,38,150,-88],[178,51,157,-87],
+ [191,64,165,-86],[204,76,173,-85],[217,89,180,-84],[229,102,188,-83],[242,114,195,-82],[255,127,203,-81],
+ [26,0,0,-70],[51,0,0,-69],[77,0,0,-68],[102,0,0,-67],[128,0,0,-66],[153,0,0,-65],[179,0,0,-64],[204,0,0,-63],
+ [230,0,0,-62],[255,0,0,-61],[255,26,0,-60],[255,51,0,-59],[255,77,0,-58],[255,102,0,-57],[255,128,0,-56],
+ [255,153,0,-55],[255,179,0,-54],[255,204,0,-53],[255,230,0,-52],[255,255,0,-51],[230,255,0,-50],[204,255,0,-49],
+ [179,255,0,-48],[153,255,0,-47],[128,255,0,-46],[102,255,0,-45],[77,255,0,-44],[51,255,0,-43],[26,255,0,-42],
+ [0,255,0,-41],[0,234,10,-40],[0,212,19,-39],[0,191,29,-38],[0,170,38,-37],[0,149,48,-36],[0,128,58,-35],
+ [0,106,67,-34],[0,85,77,-33],[0,64,86,-32],[0,42,96,-31],[0,21,105,-30],[0,0,115,-30],[0,0,125,-29],
+ [0,13,122,-29],[0,26,129,-28],[0,38,136,-28],[0,51,143,-27],[0,64,150,-27],[0,76,157,-26],[0,89,164,-26],
+ [0,102,171,-25],[0,115,178,-25],[0,128,185,-24],[0,140,192,-24],[0,153,199,-23],[0,166,206,-23],
+ [0,178,213,-22],[0,191,220,-22],[0,204,227,-21],[0,217,234,-21],[0,230,241,-20],[0,242,248,-20],[0,255,255,-19]];
+// Los grises también compiten: si no, un borde gris azulado se parecía más al rosado de -81 °C que a nada.
+for (let v = 0; v < 256; v += 3) PALETA.push([v, v, v, null]);
+const cacheT = new Map();
+function tempDeColor(r, g, b) {
+  const k = (r << 16) | (g << 8) | b;
+  let t = cacheT.get(k);
+  if (t === undefined) {
+    let mejor = 1e9;
+    for (const p of PALETA) {
+      const d = (p[0] - r) ** 2 + (p[1] - g) ** 2 + (p[2] - b) ** 2;
+      if (d < mejor) { mejor = d; t = p[3]; }
+    }
+    cacheT.set(k, t);
+  }
+  return t;
+}
+// Temperatura del tope → color de lluvia (misma escala que la leyenda).
+const ESCALA = [[-38,[96,165,250,0]],[-44,[96,165,250,.55]],[-52,[34,197,94,.65]],[-60,[250,204,21,.75]],
+  [-68,[249,115,22,.82]],[-76,[239,68,68,.88]],[-86,[217,70,239,.92]]];
+function colorLluvia(t) {
+  if (t >= ESCALA[0][0]) return null;
+  for (let i = 1; i < ESCALA.length; i++) {
+    const [t1, c1] = ESCALA[i];
+    if (t >= t1) {
+      const [t0, c0] = ESCALA[i - 1], f = (t0 - t) / (t0 - t1);
+      return c0.map((v, j) => v + (c1[j] - v) * f);
+    }
+  }
+  return ESCALA[ESCALA.length - 1][1];
+}
+function repintar(px) {
+  const n = 256 * 256, t = new Float32Array(n).fill(99), gris = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const r = px[i * 4], g = px[i * 4 + 1], b = px[i * 4 + 2];
+    if (px[i * 4 + 3] < 10) continue;
+    if (Math.max(r, g, b) - Math.min(r, g, b) < 20) { // casi gris: los bordes mezclados también
+      // Grises: los muy claros son topes de -80 °C; los demás pueden ser nube fría (-71 a -78) o suelo
+      // tibio (la paleta repite tonos). Se resuelve abajo según lo que los rodea.
+      if (r > 210) t[i] = -80; else gris[i] = 1;
+    } else {
+      const c = tempDeColor(r, g, b);
+      if (c === null) gris[i] = 1; else t[i] = c;
+    }
+  }
+  // Cada mancha gris es núcleo de tormenta si su borde es sobre todo frío (el anillo rojo de -60 a -70 °C)
+  // y suelo o nube baja si es sobre todo tibio (los azules de -20 a -35 °C, o nada).
+  const vecinos = (i) => { const x = i & 255; return [i - 256, i + 256, x > 0 ? i - 1 : -1, x < 255 ? i + 1 : -1]; };
+  for (let s = 0; s < n; s++) {
+    if (gris[s] !== 1) continue;
+    const mancha = [s], pila = [s];
+    let frio = 0, tibio = 0;
+    gris[s] = 2;
+    while (pila.length) {
+      for (const j of vecinos(pila.pop())) {
+        if (j < 0 || j >= n) continue;
+        if (gris[j] === 1) { gris[j] = 2; mancha.push(j); pila.push(j); }
+        else if (!gris[j]) { if (t[j] <= -60) frio++; else tibio++; }
+      }
+    }
+    if (frio > tibio) for (const j of mancha) t[j] = -75;
+  }
+  for (let i = 0; i < n; i++) {
+    const c = colorLluvia(t[i]);
+    if (!c) { px[i * 4 + 3] = 0; continue; }
+    px[i * 4] = c[0]; px[i * 4 + 1] = c[1]; px[i * 4 + 2] = c[2]; px[i * 4 + 3] = c[3] * 255;
+  }
+}
+// shortcut: un núcleo gris que cae en otro mosaico que su borde rojo se pierde; si se nota, rellenar entre mosaicos.
+const Tormentas = L.GridLayer.extend({
+  createTile(c, listo) {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 256;
+    const url = gibs('GOES-East_ABI_Band13_Clean_Infrared', 6, 'png')
+      .replace('{z}', c.z).replace('{y}', c.y).replace('{x}', c.x);
+    fetch(url).then(r => {
+      if (!horas.ir) { horas.ir = r.headers.get('layer-time-actual'); nota(); }
+      return r.blob();
+    }).then(createImageBitmap).then(img => {
+      const x = cv.getContext('2d');
+      x.drawImage(img, 0, 0);
+      const d = x.getImageData(0, 0, 256, 256);
+      repintar(d.data);
+      x.putImageData(d, 0, 0);
+      listo(null, cv);
+    }).catch(e => listo(e, cv));
+    return cv;
+  }
+});
+const tormentas = new Tormentas({maxNativeZoom: 6, maxZoom: 12, opacity: .85, attribution: 'NASA GIBS'}).addTo(m);
+
+// Radar: RainViewer, últimas 2 h cada 10 min, animado. Donde no hay radares (casi todo Ecuador) sale vacío.
 let frames = [], capas = [], i = 0, play = true, radarOn = true;
-const t = document.getElementById('t');
 fetch('https://api.rainviewer.com/public/weather-maps.json').then(r => r.json()).then(j => {
   frames = j.radar.past;
   capas = frames.map(f => L.tileLayer(j.host + f.path + '/256/{z}/{x}/{y}/2/1_1.png',
     {maxNativeZoom: 7, maxZoom: 12, opacity: 0, attribution: 'RainViewer'}).addTo(m));
   i = frames.length - 1; mostrar();
   setInterval(() => { if (play && frames.length) { i = (i + 1) % frames.length; mostrar(); } }, 700);
-}).catch(() => { t.textContent = 'Radar no disponible'; });
+}).catch(() => { $('t').textContent = 'Radar no disponible'; });
 
 function mostrar() {
-  capas.forEach((c, k) => c.setOpacity(radarOn && k === i ? .8 : 0));
+  capas.forEach((c, k) => c.setOpacity(radarOn && k === i ? .85 : 0));
   if (!frames.length) return;
-  const d = new Date(frames[i].time * 1000);
-  t.textContent = (i === frames.length - 1 ? 'Ahora · ' : '') +
-    d.toLocaleTimeString('es', {hour: '2-digit', minute: '2-digit'});
+  const ultimo = i === frames.length - 1;
+  $('t').textContent = 'Radar ' + hhmm(new Date(frames[i].time * 1000));
+  $('st').textContent = ultimo ? ' · ahora' : '';
+  $('prog').style.width = ((i + 1) / frames.length * 100) + '%';
 }
 const alternar = (btn, capa) => btn.onclick = () => {
-  m.hasLayer(capa) ? m.removeLayer(capa) : capa.addTo(m); btn.classList.toggle('on'); leyenda();
+  m.hasLayer(capa) ? m.removeLayer(capa) : capa.addTo(m); btn.classList.toggle('on'); nota();
 };
-alternar(nu, nubes); alternar(sa, sat);
-pp.onclick = () => { play = !play; pp.textContent = play ? '⏸' : '▶'; if (!play) { i = frames.length - 1; mostrar(); } };
-ra.onclick = () => { radarOn = !radarOn; ra.classList.toggle('on'); mostrar(); leyenda(); };
-function leyenda() {
+alternar($('nu'), nubes); alternar($('sa'), sat); alternar($('to'), tormentas);
+$('pp').onclick = () => {
+  play = !play; $('pp').textContent = play ? '❚❚' : '▶';
+  if (!play) { i = frames.length - 1; mostrar(); }
+};
+$('ra').onclick = () => { radarOn = !radarOn; $('ra').classList.toggle('on'); mostrar(); nota(); };
+
+function nota() {
+  const h = (iso) => iso ? hhmm(new Date(iso)) : '…';
   const p = [];
-  if (radarOn) p.push('Radar: lluvia de radares en tierra (azul débil → rojo fuerte)');
-  if (m.hasLayer(sat)) p.push('Lluvia sat.: estimación NASA, también donde no hay radar');
-  if (m.hasLayer(nubes)) p.push('Nubes: imagen real del satélite GOES');
-  document.getElementById('ley').textContent = p.join(' · ');
+  if (m.hasLayer(tormentas)) p.push(`Tormentas ${h(horas.ir)}: nubes de tormenta vistas por satélite, donde casi seguro llueve`);
+  if (radarOn) p.push('Radar: lluvia medida en tierra (no hay radares en casi todo Ecuador)');
+  if (m.hasLayer(sat)) p.push(`Lluvia NASA ${h(horas.sat)}: más exacta pero con horas de retraso`);
+  if (m.hasLayer(nubes)) p.push('Nubes: foto real del satélite');
+  $('nota').textContent = p.join(' · ');
 }
-leyenda();
+nota();
 </script></body></html>
