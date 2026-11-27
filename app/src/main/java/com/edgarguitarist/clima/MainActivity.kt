@@ -127,6 +127,7 @@ private class Estado {
     val satLugar = mutableStateMapOf<String, Observacion?>()
     val aire = mutableStateMapOf<String, Aire>() // por nombre de lugar; «Aquí» va con la clave AQUI
     var sel by mutableStateOf<String?>(null)
+    var marea by mutableStateOf<Marea?>(null) // río Guayas: la misma para Guayaquil y Durán
 }
 
 private fun cacheLugares(ctx: Context) = ctx.getSharedPreferences("cache_lugares", Context.MODE_PRIVATE)
@@ -183,6 +184,7 @@ private fun App() {
             val lon = pos?.longitude ?: GYE_LON
             e.etapa = "Descargando el pronóstico…"
             scope.launch { cargarLugares(ctx, e) }
+            scope.launch { withContext(Dispatchers.IO) { descargarMarea() }?.let { e.marea = it } }
             val json = withContext(Dispatchers.IO) { descargarPronostico(lat, lon) }
             e.datos = parsear(json)
             scope.launch { e.satelite = withContext(Dispatchers.IO) { observarSatelite(lat, lon) } }
@@ -252,6 +254,7 @@ private fun App() {
                             Detalle(
                                 d, lugarSel?.nombre ?: e.lugar, if (lugarSel == null) e.satelite else e.satLugar[lugarSel.nombre],
                                 e.aire[lugarSel?.nombre ?: AQUI],
+                                e.marea?.takeIf { mareaAplica(lugarSel?.lat ?: e.lat ?: GYE_LAT, lugarSel?.lon ?: e.lon ?: GYE_LON) },
                             ) { TarjetaLugares(filas, lugarSel?.nombre) { e.sel = it } }
                         }
                         Spacer(Modifier.height(24.dp))
@@ -352,7 +355,7 @@ private fun hora(iso: String) = iso.substring(11, 16)
 private val formatoDia = DateTimeFormatter.ofPattern("EEE d", Locale("es"))
 
 @Composable
-private fun Detalle(p: Pronostico, lugar: String, sat: Observacion?, aire: Aire?, debajo: @Composable () -> Unit = {}) {
+private fun Detalle(p: Pronostico, lugar: String, sat: Observacion?, aire: Aire?, marea: Marea?, debajo: @Composable () -> Unit = {}) {
     val a = p.actual
     val hoy = p.dias[0]
     // Encabezado
@@ -391,6 +394,8 @@ private fun Detalle(p: Pronostico, lugar: String, sat: Observacion?, aire: Aire?
         Text(resumenLluvia(p.cuartos), fontSize = 16.sp, fontWeight = FontWeight.Medium)
         BarrasLluvia(p.cuartos)
     }
+
+    marea?.let { TarjetaMarea(it, p.horas) }
 
     Tarjeta("🕒  Próximas 24 horas") { Horas(p.horas) }
 

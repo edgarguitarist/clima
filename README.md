@@ -28,6 +28,11 @@ App de Android (Kotlin + Jetpack Compose, mismo stack que Lince) con el clima de
   en la próxima hora o si el satélite ve una tormenta encima. No repite el mismo aviso antes de 3 h.
 - **Calidad del aire** (Open-Meteo / Copernicus): índice US-AQI con consejo, PM2.5, PM10, O₃ y NO₂, y el peor valor de
   las próximas 24 h. Polen no: Open-Meteo solo lo da para Europa.
+- **Marea del río Guayas** (para lugares a menos de ~60 km de Guayaquil): nivel ahora y si sube o baja, próxima
+  pleamar o bajamar, gráfico de 6 h atrás a 30 h adelante, aviso de **aguaje** (luna nueva o llena: las mareas más altas
+  del mes) y alerta si una pleamar coincide con lluvia fuerte prevista, porque el agua no tiene por dónde salir. Fuente:
+  predicción oficial de INOCAR para la estación Guayaquil-Río (Durán queda enfrente); si no responde, el modelo de
+  Open-Meteo en el estuario, que no llega río adentro.
 - **Widget** para la pantalla de inicio (4×2, redimensionable): temperatura, sensación, máx/mín y la lluvia de las
   próximas 2 horas. Se refresca cada 30 min con la última ubicación que usó la app, y al abrirla.
 
@@ -69,6 +74,7 @@ prefijo `CLIMA_`); si no, con la debug.
 | `Lugares.kt`, `PantallaLugares.kt` | Lugares guardados, buscador y su pantalla |
 | `Alerta.kt` | Aviso de lluvia en segundo plano |
 | `Aire.kt`, `ui/TarjetaAire.kt` | Calidad del aire |
+| `Marea.kt`, `PantallaMarea.kt` | Marea del río Guayas (INOCAR), aguaje y su gráfico |
 | `Widget.kt` | Widget de pantalla de inicio |
 | `Ubicacion.kt` | Ubicación actual y nombre del lugar |
 | `MainActivity.kt` | Pantallas: pronóstico y mapa |
