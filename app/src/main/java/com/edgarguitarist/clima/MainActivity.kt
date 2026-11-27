@@ -369,7 +369,7 @@ private fun Detalle(p: Pronostico, lugar: String, sat: Observacion?, aire: Aire?
         Text("${r(a.temp)}°", fontSize = 104.sp, fontWeight = FontWeight.Thin, lineHeight = 104.sp)
         Text(texto(a.codigo), fontSize = 21.sp, fontWeight = FontWeight.Medium)
         Text(
-            titular(p.cuartos, sat?.temp, p.modelo != null && p.estacion?.llueve == false && sat != null), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
+            titular(p.cuartos, sat?.temp, p.modelo != null && esLluvia(p.modelo) && !esLluvia(a.codigo) && sat != null), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 10.dp).clip(RoundedCornerShape(14.dp)).background(Color(0x33000000))
                 .padding(horizontal = 14.dp, vertical = 8.dp),
         )
@@ -386,12 +386,14 @@ private fun Detalle(p: Pronostico, lugar: String, sat: Observacion?, aire: Aire?
             lluviaAhora(a.lluvia)?.let { "💧 $it" to Celeste },
             sat?.let {
                 val h = runCatching { java.time.Instant.parse(it.hora).atZone(java.time.ZoneId.systemDefault()).toLocalTime().toString().take(5) }.getOrDefault("")
-                "🛰️ $h · ${textoSatelite(it.temp)}" to if ((it.temp ?: 0) <= -52) Color(0xFFFCA5A5) else Color.White.copy(alpha = .8f)
+                val cielo = p.cobertura?.let { c -> "Sobre ti: ${textoCielo(c)} · " } ?: ""
+                "🛰️ $h · $cielo${textoSatelite(it.temp)}" to if ((it.temp ?: 0) <= -52) Color(0xFFFCA5A5) else Color.White.copy(alpha = .8f)
             },
             p.estacion?.let {
                 val h = java.time.Instant.ofEpochSecond(it.obs).atZone(java.time.ZoneId.systemDefault()).toLocalTime().toString().take(5)
-                "✈️ $h · ${textoEstacion(it, p.modelo)}" to if (it.llueve) Celeste else Color.White.copy(alpha = .8f)
+                "✈️ $h · ${textoEstacion(it)}" to if (it.llueve) Celeste else Color.White.copy(alpha = .8f)
             },
+            p.modelo?.let { "El modelo daba «${texto(it).lowercase()}»: se corrigió con lo observado" to Color.White.copy(alpha = .5f) },
         )
         medido.forEach { (t, c) -> Text(t, color = c, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp)) }
     }

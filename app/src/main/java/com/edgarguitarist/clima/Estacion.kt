@@ -6,13 +6,18 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.hypot
+import kotlin.math.roundToInt
 
 // Los modelos (todos: ECMWF, GFS, ICON, JMA) dan llovizna en Guayaquil mucho más de lo que llueve. La estación
 // meteorológica del aeropuerto (METAR, cada hora, gratis vía aviationweather.gov) sí ve si llueve o no: con ella
 // se corrige el «ahora» del modelo. El satélite sigue aparte para las tormentas.
 
-data class Estacion(val nombre: String, val obs: Long, val distKm: Double, val llueve: Boolean, val tiempo: String, val nubes: String)
+data class Estacion(
+    val nombre: String, val obs: Long, val distKm: Double, val llueve: Boolean, val tiempo: String, val nubes: String,
+    val temp: Double? = null, val rocio: Double? = null,
+)
 
 private val CERCA_KM = 20.0
 private val VIGENCIA_SEG = 80 * 60
@@ -39,7 +44,8 @@ fun leerEstacion(o: JSONObject): Estacion {
     val nubes = (0 until (capas?.length() ?: 0)).map { capas!!.getJSONObject(it).optString("cover") }
         .maxByOrNull { listOf("FEW", "SCT", "BKN", "OVC").indexOf(it) } ?: "CLR"
     val nombre = o.optString("name").substringBefore('/').substringBefore(',').ifEmpty { o.optString("icaoId") }
-    return Estacion(nombre, o.optLong("obsTime"), o.optDouble("distKm"), llueve, wx, nubes)
+    fun num(k: String) = o.optDouble(k).takeUnless { it.isNaN() }
+    return Estacion(nombre, o.optLong("obsTime"), o.optDouble("distKm"), llueve, wx, nubes, num("temp"), num("dewp"))
 }
 
 /** Código WMO equivalente a lo que reporta la estación. */
@@ -55,32 +61,51 @@ fun codigoEstacion(e: Estacion): Int = when {
     else -> 0
 }
 
-private fun esLluvia(codigo: Int) = codigo in 51..67 || codigo in 80..82
+fun esLluvia(codigo: Int) = codigo in 51..67 || codigo in 80..82
+
+/** Humedad relativa con la fórmula de Magnus. */
+fun humedadRelativa(t: Double, rocio: Double) =
+    (100 * exp(17.625 * rocio / (243.04 + rocio)) / exp(17.625 * t / (243.04 + t))).roundToInt().coerceIn(0, 100)
 
 /**
- * Cruza el «ahora» del modelo con la estación. Si el modelo da lluvia ligera y la estación no ve lluvia, manda la
- * estación (código de sus nubes y 0 mm). Si llueve en la estación y el modelo no lo ve, el código pasa a lluvia.
- * Lluvia moderada o fuerte del modelo no se toca: puede ser un chubasco local que la estación, a unos km, no ve.
+ * Cruza el «ahora» del modelo con lo observado. Devuelve el actual corregido, los cuartos (el de ahora en 0 si se
+ * desmintió la lluvia) y el código que daba el modelo si se cambió.
+ * - Temperatura y humedad: las medidas por la estación cercana (la sensación se corre lo mismo que la temperatura).
+ * - Cielo sobre tu punto (visible del satélite, de día): con pocas nubes no llueve, diga lo que diga el modelo, y el
+ *   código pasa a lo que se ve.
+ * - Estación: si no ve lluvia, se desmiente la lluvia ligera del modelo (la moderada o fuerte puede ser un chubasco
+ *   local que la estación, a unos km, no ve). Si ve lluvia y el modelo no, pasa a lluvia, salvo que sobre ti esté
+ *   despejado.
  */
-fun corregir(a: Actual, cuartos: List<Cuarto>, e: Estacion?): Triple<Actual, List<Cuarto>, Int?> {
-    if (e == null) return Triple(a, cuartos, null)
-    val modeloLlueve = a.lluvia >= 0.05 || esLluvia(a.codigo)
-    return when {
-        !e.llueve && modeloLlueve && a.lluvia * 4 < 2.5 ->
-            Triple(a.copy(codigo = codigoEstacion(e), lluvia = 0.0), cuartos.mapIndexed { i, q -> if (i == 0) q.copy(lluvia = 0.0) else q }, a.codigo)
-        e.llueve && !modeloLlueve -> Triple(a.copy(codigo = codigoEstacion(e)), cuartos, a.codigo)
-        else -> Triple(a, cuartos, null)
+fun corregir(a: Actual, cuartos: List<Cuarto>, e: Estacion?, cobertura: Double? = null): Triple<Actual, List<Cuarto>, Int?> {
+    var b = a
+    if (e?.temp != null) {
+        b = b.copy(temp = e.temp, sensacion = a.sensacion + (e.temp - a.temp))
+        if (e.rocio != null) b = b.copy(rocio = e.rocio, humedad = humedadRelativa(e.temp, e.rocio))
     }
+    val modeloLlueve = a.lluvia >= 0.05 || esLluvia(a.codigo)
+    val despejado = cobertura != null && cobertura < .4
+    val seco = when {
+        !modeloLlueve -> false
+        despejado -> true
+        e != null && !e.llueve -> a.lluvia * 4 < 2.5
+        else -> false
+    }
+    val codigo = when {
+        seco -> cobertura?.let(::codigoCielo) ?: codigoEstacion(e!!)
+        e != null && e.llueve && !modeloLlueve && !despejado -> codigoEstacion(e)
+        // Sin lluvia de por medio, el cielo que se ve manda sobre el del modelo (solo códigos de nubes, no niebla).
+        !modeloLlueve && cobertura != null && a.codigo in 0..3 -> codigoCielo(cobertura)
+        else -> a.codigo
+    }
+    val cs = if (seco) cuartos.mapIndexed { i, q -> if (i == 0) q.copy(lluvia = 0.0) else q } else cuartos
+    return Triple(b.copy(codigo = codigo, lluvia = if (seco) 0.0 else b.lluvia), cs, a.codigo.takeIf { it != codigo })
 }
 
-fun textoEstacion(e: Estacion, modelo: Int?): String {
+fun textoEstacion(e: Estacion): String {
     val que = if (e.llueve) texto(codigoEstacion(e)).lowercase() else "sin lluvia"
-    val nota = when {
-        modelo != null && !e.llueve -> " (el modelo daba ${texto(modelo).lowercase()})"
-        modelo != null -> " (el modelo no la veía)"
-        else -> ""
-    }
-    return "Aeropuerto de ${e.nombre} (a %.0f km) · $que$nota".format(e.distKm)
+    val t = e.temp?.let { " · %.0f° medidos".format(it) } ?: ""
+    return "Aeropuerto de ${e.nombre} (a %.0f km) · $que$t".format(e.distKm)
 }
 
 /** Bloqueante. Null si no hay estación cerca, el reporte es viejo o no responde: entonces queda solo el modelo. */

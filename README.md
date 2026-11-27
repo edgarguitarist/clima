@@ -22,7 +22,10 @@ App de Android (Kotlin + Jetpack Compose, mismo stack que Lince) con el clima de
   El modelo puede no ver una tormenta que ya está sobre ti; el satélite sí.
 - **Se coteja con la estación del aeropuerto** (METAR, cada hora, aviationweather.gov) si hay una a menos de 20 km:
   los modelos dan llovizna en Guayaquil mucho más de lo que llueve, así que si la estación no ve lluvia, el «ahora»
-  pasa a lo que ella reporta (con nota de lo que daba el modelo), y al revés si llueve y el modelo no lo ve.
+  pasa a lo que ella reporta (con nota de lo que daba el modelo), y al revés si llueve y el modelo no lo ve. La
+  temperatura y la humedad que se muestran son las medidas por la estación.
+- **Cielo sobre tu punto exacto** (de día): el visible de GOES-East (~1 km, cada 10 min) dice cuántas nubes tienes
+  encima. Con pocas nubes no puede llover, así que se desmiente la lluvia del modelo y se muestra el cielo que se ve.
 - **Titular** arriba de todo que responde «¿necesito paraguas?» («☔ Lluvia hasta las 20:30», «😎 Sin lluvia en
   las próximas 2 horas»), y avisa si el satélite ve una tormenta encima aunque el modelo no la vea.
 - **Lugares guardados** (Guayaquil y Durán de entrada) con chips arriba, una tarjeta «Tus lugares ahora» para comparar
@@ -82,7 +85,7 @@ prefijo `CLIMA_`); si no, con la debug.
 | `Clima.kt` | Pide y parsea el pronóstico de Open-Meteo; textos e íconos de los códigos WMO |
 | `Actualizador.kt` | Aviso de versión nueva desde los releases de GitHub |
 | `Estacion.kt` | Estación meteorológica cercana (METAR) para corregir el «ahora» del modelo |
-| `Satelite.kt` | Lee el infrarrojo de GOES-East sobre tu ubicación y lo traduce a «tormenta encima» |
+| `Satelite.kt` | GOES-East sobre tu ubicación: infrarrojo («tormenta encima») y visible (cuántas nubes) |
 | `Lugares.kt`, `PantallaLugares.kt` | Lugares guardados, buscador y su pantalla |
 | `Alerta.kt` | Aviso de lluvia en segundo plano |
 | `Aire.kt`, `ui/TarjetaAire.kt` | Calidad del aire |

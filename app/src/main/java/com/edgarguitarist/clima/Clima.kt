@@ -1,5 +1,8 @@
 package com.edgarguitarist.clima
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -30,7 +33,8 @@ data class Dia(
 )
 data class Pronostico(
     val actual: Actual, val cuartos: List<Cuarto>, val horas: List<Hora>, val dias: List<Dia>,
-    val estacion: Estacion? = null, val modelo: Int? = null, // modelo: el código que daba el modelo si la estación lo corrigió
+    val estacion: Estacion? = null, val modelo: Int? = null, // modelo: el código que daba el modelo si lo observado lo cambió
+    val cobertura: Double? = null, val horaCielo: String? = null, // nubes sobre el punto según el visible del satélite
 )
 
 private const val ACTUAL = "temperature_2m,apparent_temperature,relative_humidity_2m,dew_point_2m,precipitation," +
@@ -54,7 +58,13 @@ fun descargarPronostico(lat: Double, lon: Double): String {
         try {
             if (c.responseCode != 200) error("Open-Meteo respondió ${c.responseCode}")
             val j = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
-            observarEstacion(lat, lon)?.let { j.put("estacion", it) } // viaja con el pronóstico, también a la caché
+            // Lo observado viaja con el pronóstico, también a la caché, y se cruza al parsear.
+            val (est, cielo) = runBlocking(Dispatchers.IO) {
+                val e = async { observarEstacion(lat, lon) }; val v = async { observarCielo(lat, lon) }
+                e.await() to v.await()
+            }
+            est?.let { j.put("estacion", it) }
+            cielo?.let { j.put("cielo", it) }
             return j.toString()
         } catch (e: Exception) {
             ultimo = e
@@ -139,8 +149,10 @@ fun parsear(json: String): Pronostico {
         )
     }
     val est = j.optJSONObject("estacion")?.let(::leerEstacion)
-    val (a2, c2, modelo) = corregir(actual, cuartos, est)
-    return Pronostico(a2, c2, horas, dias, est, modelo)
+    val cielo = j.optJSONObject("cielo")
+    val cob = cielo?.optDouble("cobertura")?.takeUnless { it.isNaN() }
+    val (a2, c2, modelo) = corregir(actual, cuartos, est, cob)
+    return Pronostico(a2, c2, horas, dias, est, modelo, cob, cielo?.optString("hora"))
 }
 
 // Códigos WMO que usa Open-Meteo

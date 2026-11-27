@@ -92,3 +92,53 @@ fun observarSatelite(lat: Double, lon: Double): Observacion? = runCatching {
         c.disconnect()
     }
 }.getOrNull()
+
+// Visible de GOES-East (banda 2, ~1 km, cada 10 min): de día dice si sobre tu punto exacto hay nubes o sol, cosa que
+// el infrarrojo no distingue en nubes bajas. GIBS la entrega en grises con gamma: suelo y agua quedan bajo ~100,
+// cúmulos y estratos sobre ~130 (reflectancia ~0,26).
+
+private const val UMBRAL_NUBE = 130
+
+/** Fracción de píxeles nublados (0 a 1) entre los ARGB grises dados. */
+fun coberturaVisible(argb: IntArray): Double = argb.count { ((it shr 16) and 255) >= UMBRAL_NUBE }.toDouble() / argb.size
+
+/** Solo con el sol alto: temprano o al atardecer todo se ve oscuro y parecería despejado. */
+fun solAlto(horaUtc: java.time.Instant, lon: Double): Boolean {
+    val solar = horaUtc.atZone(java.time.ZoneOffset.UTC).let { it.hour + it.minute / 60.0 } + lon / 15
+    return ((solar % 24) + 24) % 24 in 8.0..16.5
+}
+
+fun codigoCielo(cobertura: Double): Int = when {
+    cobertura < .15 -> 0; cobertura < .4 -> 1; cobertura < .75 -> 2; else -> 3
+}
+
+fun textoCielo(cobertura: Double): String = when {
+    cobertura < .15 -> "despejado"; cobertura < .4 -> "pocas nubes"; cobertura < .75 -> "nubes dispersas"; else -> "nublado"
+}
+
+/** Bloqueante. {"cobertura", "hora"} sobre un cuadro de ~6 km alrededor del punto, o null de noche o si falla. */
+fun observarCielo(lat: Double, lon: Double): org.json.JSONObject? = runCatching {
+    val n = 128 // zoom 7: ~1,2 km por píxel, el máximo de esta capa en GIBS
+    val xf = (lon + 180) / 360 * n
+    val la = lat * PI / 180
+    val yf = (1 - ln(tan(la) + 1 / cos(la)) / PI) / 2 * n
+    val tx = floor(xf).toInt(); val ty = floor(yf).toInt()
+    val c = URL("https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/GOES-East_ABI_Band2_Red_Visible_1km/default/default/" +
+        "GoogleMapsCompatible_Level7/7/$ty/$tx.png").openConnection() as HttpURLConnection
+    c.connectTimeout = 8_000
+    c.readTimeout = 10_000
+    try {
+        if (c.responseCode != 200) return@runCatching null
+        val hora = c.getHeaderField("Layer-Time-Actual") ?: return@runCatching null
+        if (!solAlto(java.time.Instant.parse(hora), lon)) return@runCatching null
+        val bmp = BitmapFactory.decodeStream(c.inputStream) ?: return@runCatching null
+        // shortcut: cerca del borde del mosaico el cuadro se recorta; bastaría pedir también el vecino.
+        val px = ((xf - tx) * 256).toInt().coerceIn(2, 253)
+        val py = ((yf - ty) * 256).toInt().coerceIn(2, 253)
+        val argb = IntArray(25)
+        bmp.getPixels(argb, 0, 5, px - 2, py - 2, 5, 5)
+        org.json.JSONObject().put("cobertura", coberturaVisible(argb)).put("hora", hora)
+    } finally {
+        c.disconnect()
+    }
+}.getOrNull()
