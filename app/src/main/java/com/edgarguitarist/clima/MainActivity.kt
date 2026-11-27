@@ -44,6 +44,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -78,6 +80,9 @@ import com.edgarguitarist.clima.ui.Fondo
 import com.edgarguitarist.clima.ui.TemaClima
 import com.edgarguitarist.clima.ui.TextoSec
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -89,8 +94,8 @@ import kotlin.math.roundToInt
 private const val GYE_LAT = -2.19 // si no hay permiso de ubicación: Guayaquil
 private const val GYE_LON = -79.89
 
-private val Vidrio = Color(0x14FFFFFF) // tarjetas translúcidas sobre el degradado
-private val Borde = Color(0x1AFFFFFF)
+internal val Vidrio = Color(0x14FFFFFF) // tarjetas translúcidas sobre el degradado
+internal val Borde = Color(0x1AFFFFFF)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -110,7 +115,14 @@ private class Estado {
     var cargando by mutableStateOf(false)
     var etapa by mutableStateOf("")
     var satelite by mutableStateOf<Observacion?>(null)
+    // Lugares guardados: su pronóstico y lo que ve el satélite, por nombre. sel = null es «Aquí».
+    var lugares by mutableStateOf<List<Lugar>>(emptyList())
+    val datosLugar = mutableStateMapOf<String, Pronostico>()
+    val satLugar = mutableStateMapOf<String, Observacion?>()
+    var sel by mutableStateOf<String?>(null)
 }
+
+private fun cacheLugares(ctx: Context) = ctx.getSharedPreferences("cache_lugares", Context.MODE_PRIVATE)
 
 /** El último pronóstico bajado: se muestra al instante al abrir, mientras llega el nuevo. */
 private fun cache(ctx: Context) = ctx.getSharedPreferences("cache", Context.MODE_PRIVATE)
@@ -124,6 +136,21 @@ private fun leerCache(ctx: Context, e: Estado) {
         e.lat = c.getFloat("lat", 0f).toDouble()
         e.lon = c.getFloat("lon", 0f).toDouble()
     }
+    e.lugares = Lugares.leer(ctx)
+    val cl = cacheLugares(ctx)
+    e.lugares.forEach { l -> cl.getString(l.nombre, null)?.let { j -> runCatching { parsear(j) }.onSuccess { e.datosLugar[l.nombre] = it } } }
+}
+
+/** Pronóstico y satélite de todos los lugares guardados, en paralelo. Un lugar que falla se queda con su caché. */
+private suspend fun cargarLugares(ctx: Context, e: Estado) = coroutineScope {
+    e.lugares.map { l ->
+        async(Dispatchers.IO) {
+            runCatching { descargarPronostico(l.lat, l.lon) }.onSuccess { j ->
+                runCatching { parsear(j) }.onSuccess { e.datosLugar[l.nombre] = it; cacheLugares(ctx).edit().putString(l.nombre, j).apply() }
+            }
+            e.satLugar[l.nombre] = observarSatelite(l.lat, l.lon)
+        }
+    }.awaitAll()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -147,6 +174,7 @@ private fun App() {
             val lat = pos?.latitude ?: GYE_LAT
             val lon = pos?.longitude ?: GYE_LON
             e.etapa = "Descargando el pronóstico…"
+            scope.launch { cargarLugares(ctx, e) }
             val json = withContext(Dispatchers.IO) { descargarPronostico(lat, lon) }
             e.datos = parsear(json)
             scope.launch { e.satelite = withContext(Dispatchers.IO) { observarSatelite(lat, lon) } }
@@ -188,15 +216,21 @@ private fun App() {
         }
     }
 
-    val d = e.datos
+    val lugarSel = e.lugares.find { it.nombre == e.sel }
+    val d = if (lugarSel == null) e.datos else e.datosLugar[lugarSel.nombre]
+    var hoja by remember { mutableStateOf(false) }
     val colores = fondo(d?.actual)
     val arriba by animateColorAsState(colores.first, tween(800), label = "fondo")
     val medio by animateColorAsState(colores.second, tween(800), label = "fondo2")
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(arriba, medio, Fondo)))) {
         Column(Modifier.fillMaxSize().safeDrawingPadding()) {
             Pestanas(pestana) { pestana = it }
+            SelectorLugares(e.lugares, lugarSel?.nombre, { e.sel = it }) { hoja = true }
+            Spacer(Modifier.height(6.dp))
             if (pestana == 1) {
-                Mapa(e.lat ?: GYE_LAT, e.lon ?: GYE_LON)
+                val la = lugarSel?.lat ?: e.lat ?: GYE_LAT
+                val lo = lugarSel?.lon ?: e.lon ?: GYE_LON
+                key(la, lo) { Mapa(la, lo) }
             } else {
                 PullToRefreshBox(isRefreshing = e.cargando && d != null, onRefresh = { scope.launch { cargar() } }) {
                     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
@@ -204,7 +238,11 @@ private fun App() {
                             Cargando(e.etapa, e.error)
                         } else {
                             if (e.error.isNotEmpty()) Aviso("No se pudo actualizar: ${e.error}. Desliza hacia abajo para reintentar.")
-                            Detalle(d, e.lugar, e.satelite)
+                            val filas = listOf(FilaLugar(AQUI, e.datos, e.satelite)) +
+                                e.lugares.map { FilaLugar(it.nombre, e.datosLugar[it.nombre], e.satLugar[it.nombre]) }
+                            Detalle(
+                                d, lugarSel?.nombre ?: e.lugar, if (lugarSel == null) e.satelite else e.satLugar[lugarSel.nombre],
+                            ) { TarjetaLugares(filas, lugarSel?.nombre) { e.sel = it } }
                         }
                         Spacer(Modifier.height(24.dp))
                     }
@@ -212,6 +250,12 @@ private fun App() {
             }
         }
     }
+    if (hoja) HojaLugares(e.lugares, { nuevos ->
+        e.lugares = nuevos
+        Lugares.guardar(ctx, nuevos)
+        if (e.sel != null && nuevos.none { it.nombre == e.sel }) e.sel = null
+        scope.launch { cargarLugares(ctx, e) }
+    }) { hoja = false }
     AvisoActualizacion()
 }
 
@@ -297,7 +341,7 @@ private fun hora(iso: String) = iso.substring(11, 16)
 private val formatoDia = DateTimeFormatter.ofPattern("EEE d", Locale("es"))
 
 @Composable
-private fun Detalle(p: Pronostico, lugar: String, sat: Observacion?) {
+private fun Detalle(p: Pronostico, lugar: String, sat: Observacion?, debajo: @Composable () -> Unit = {}) {
     val a = p.actual
     val hoy = p.dias[0]
     // Encabezado
@@ -324,6 +368,8 @@ private fun Detalle(p: Pronostico, lugar: String, sat: Observacion?) {
         )
         medido.forEach { (t, c) -> Text(t, color = c, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
     }
+
+    debajo()
 
     Tarjeta("🌧️  Lluvia · próximas 2 horas") {
         Text(resumenLluvia(p.cuartos), fontSize = 16.sp, fontWeight = FontWeight.Medium)
