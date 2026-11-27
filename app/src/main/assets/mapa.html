@@ -21,6 +21,9 @@
  #st{color:#94a3b8;font-size:12px}
  #barra{flex:1;height:4px;background:rgba(255,255,255,.12);border-radius:2px;position:relative}
  #prog{position:absolute;left:0;top:0;bottom:0;background:#60a5fa;border-radius:2px}
+ #marca{position:absolute;top:-4px;width:2px;height:12px;background:#fff;border-radius:1px}
+ #barra{cursor:pointer;margin:6px 0}
+ .leaflet-image-layer{transition:opacity .5s}
  #ley{margin-top:8px;font-size:11px;color:#94a3b8;display:flex;align-items:center;gap:6px}
  #esc{flex:1;height:6px;border-radius:3px;
     background:linear-gradient(90deg,#60a5fa,#22c55e,#facc15,#f97316,#ef4444,#d946ef)}
@@ -36,11 +39,11 @@
     <button id="pp">❚❚</button>
     <div style="flex:1">
       <div class="f"><span id="t">Cargando…</span><span id="st"></span></div>
-      <div class="f" style="margin-top:6px"><div id="barra"><div id="prog"></div></div></div>
+      <div class="f" style="margin-top:6px"><div id="barra"><div id="prog"></div><div id="marca"></div></div></div>
     </div>
   </div>
   <div class="f chips">
-    <button id="to" class="on">Tormentas</button>
+    <button id="to" class="on">Lluvia</button>
     <button id="ra" class="on">Radar</button>
     <button id="nu">Nubes</button>
     <button id="sa">Lluvia NASA</button>
@@ -65,13 +68,10 @@ L.marker([LAT, LON], {icon: L.divIcon({className: '', html: '<div class="yo"></d
   interactive: false, zIndexOffset: 1000}).addTo(m);
 
 const GIBS = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/';
-const gibs = (capa, nivel, ext) =>
-  `${GIBS}${capa}/default/default/GoogleMapsCompatible_Level${nivel}/{z}/{y}/{x}.${ext}`;
+// tiempo: 'default' (lo último) o una hora ISO, para animar las últimas horas.
+const gibs = (capa, nivel, ext, tiempo = 'default') =>
+  `${GIBS}${capa}/default/${tiempo}/GoogleMapsCompatible_Level${nivel}/{z}/{y}/{x}.${ext}`;
 const horas = {}; // hora real de cada capa satelital (cabecera Layer-Time-Actual de GIBS)
-
-// Nubes: GOES-East GeoColor (cada 10 min, cubre América; de noche mezcla el infrarrojo).
-const nubes = L.tileLayer(gibs('GOES-East_ABI_GeoColor', 7, 'jpeg'),
-  {maxNativeZoom: 7, maxZoom: 12, opacity: .45, attribution: 'NASA GIBS'});
 
 // Lluvia NASA (IMERG): buena estimación, pero llega con ~5 h de retraso y en celdas de ~10 km.
 // Se desenfoca en proporción a lo que mide una celda en pantalla, para que no se vean cuadros.
@@ -167,12 +167,9 @@ const Tormentas = L.GridLayer.extend({
   createTile(c, listo) {
     const cv = document.createElement('canvas');
     cv.width = cv.height = 256;
-    const url = gibs('GOES-East_ABI_Band13_Clean_Infrared', 6, 'png')
+    const url = gibs('GOES-East_ABI_Band13_Clean_Infrared', 6, 'png', this.options.tiempo)
       .replace('{z}', c.z).replace('{y}', c.y).replace('{x}', c.x);
-    fetch(url).then(r => {
-      if (!horas.ir) { horas.ir = r.headers.get('layer-time-actual'); nota(); }
-      return r.blob();
-    }).then(createImageBitmap).then(img => {
+    fetch(url).then(r => r.blob()).then(createImageBitmap).then(img => {
       const x = cv.getContext('2d');
       x.drawImage(img, 0, 0);
       const d = x.getImageData(0, 0, 256, 256);
@@ -183,43 +180,164 @@ const Tormentas = L.GridLayer.extend({
     return cv;
   }
 });
-const tormentas = new Tormentas({maxNativeZoom: 6, maxZoom: 12, opacity: .85, attribution: 'NASA GIBS'}).addTo(m);
 
-// Radar: RainViewer, últimas 2 h cada 10 min, animado. Donde no hay radares (casi todo Ecuador) sale vacío.
-let frames = [], capas = [], i = 0, play = true, radarOn = true;
-fetch('https://api.rainviewer.com/public/weather-maps.json').then(r => r.json()).then(j => {
-  frames = j.radar.past;
-  capas = frames.map(f => L.tileLayer(j.host + f.path + '/256/{z}/{x}/{y}/2/1_1.png',
-    {maxNativeZoom: 7, maxZoom: 12, opacity: 0, attribution: 'RainViewer'}).addTo(m));
-  i = frames.length - 1; mostrar();
-  setInterval(() => { if (play && frames.length) { i = (i + 1) % frames.length; mostrar(); } }, 700);
-}).catch(() => { $('t').textContent = 'Radar no disponible'; });
+// ── Línea de tiempo: las últimas 2 h vistas por satélite y radar, y las próximas 12 h del pronóstico ──
+// Cada cuadro tiene su capa de lluvia, de nubes y de radar; se muestra una sola a la vez.
+const PASO_PASADO = 20 * 60e3, PASADO = 2 * 3600e3, FUTURO = 12;
+let linea = [], ahora = 0, i = 0, play = true;
+const on = {lluvia: true, radar: true, nubes: false};
+const OPACIDAD = {lluvia: .85, radar: .85, nubes: .45};
+
+// Pronóstico de Open-Meteo en una cuadrícula de 17×17 puntos (±3° alrededor): ~0,7 s y 160 KB.
+// shortcut: la imagen se estira lineal en latitud; cerca del ecuador la deformación de Mercator es despreciable.
+const N = 17, PASO = .375, MEDIO = (N - 1) / 2 * PASO;
+function pedirPronostico() {
+  const lats = [], lons = [];
+  for (let a = 0; a < N; a++) for (let b = 0; b < N; b++) {
+    lats.push((LAT - MEDIO + a * PASO).toFixed(3)); lons.push((LON - MEDIO + b * PASO).toFixed(3));
+  }
+  try { // caché de 30 min: Open-Meteo cuenta cada punto como una consulta (10 000 al día gratis)
+    const c = JSON.parse(localStorage.getItem('pron') || 'null');
+    if (c && Date.now() - c.t < 30 * 60e3 && Math.abs(c.lat - LAT) < .1 && Math.abs(c.lon - LON) < .1) return Promise.resolve(c.d);
+  } catch (e) {}
+  return fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}` +
+    `&hourly=precipitation,cloud_cover&forecast_hours=${FUTURO + 2}&timeformat=unixtime`)
+    .then(r => { if (!r.ok) throw new Error('Open-Meteo ' + r.status); return r.json(); })
+    .then(j => {
+      const d = {t: j[0].hourly.time, lluvia: j.map(p => p.hourly.precipitation), nubes: j.map(p => p.hourly.cloud_cover)};
+      try { localStorage.setItem('pron', JSON.stringify({t: Date.now(), lat: LAT, lon: LON, d})); } catch (e) {}
+      return d;
+    });
+}
+// Lluvia en mm/h → color (misma escala de la leyenda que las tormentas).
+// Bajo 0,3 mm/h no se pinta: el modelo reparte llovizna casi nula por todos lados y tapaba el mapa.
+const ESC_MM = [[.3,[96,165,250,0]],[.8,[96,165,250,.55]],[2,[34,197,94,.65]],[4,[250,204,21,.75]],
+  [8,[249,115,22,.82]],[16,[239,68,68,.88]],[35,[217,70,239,.92]]];
+function interp(esc, v) {
+  if (v < esc[0][0]) return null;
+  for (let k = 1; k < esc.length; k++) if (v < esc[k][0]) {
+    const [v0, c0] = esc[k - 1], [v1, c1] = esc[k], f = (v - v0) / (v1 - v0);
+    return c0.map((x, j) => x + (c1[j] - x) * f);
+  }
+  return esc[esc.length - 1][1];
+}
+// Una imagen suave a partir de la cuadrícula: 17×17 píxeles, ampliada y desenfocada (los datos son de ~10 km).
+function imagen(valores, color) {
+  const chica = document.createElement('canvas'); chica.width = chica.height = N;
+  const x = chica.getContext('2d'), d = x.createImageData(N, N);
+  valores.forEach((v, k) => {
+    const c = color(v), a = Math.floor(k / N), b = k % N, p = ((N - 1 - a) * N + b) * 4; // fila 0 = norte
+    if (c) { d.data[p] = c[0]; d.data[p + 1] = c[1]; d.data[p + 2] = c[2]; d.data[p + 3] = c[3] * 255; }
+  });
+  x.putImageData(d, 0, 0);
+  const grande = document.createElement('canvas'); grande.width = grande.height = N * 16;
+  const g = grande.getContext('2d');
+  g.filter = 'blur(6px)';
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(chica, 0, 0, grande.width, grande.height);
+  // Bordes difuminados en círculo: sin el corte recto donde termina la cuadrícula.
+  const w = grande.width, borde0 = g.createRadialGradient(w / 2, w / 2, w * .3, w / 2, w / 2, w * .5);
+  borde0.addColorStop(0, '#000'); borde0.addColorStop(1, 'transparent');
+  g.filter = 'none';
+  g.globalCompositeOperation = 'destination-in';
+  g.fillStyle = borde0;
+  g.fillRect(0, 0, w, w);
+  const borde = PASO / 2;
+  return L.imageOverlay(grande.toDataURL(), [[LAT - MEDIO - borde, LON - MEDIO - borde], [LAT + MEDIO + borde, LON + MEDIO + borde]],
+    {opacity: 0, attribution: 'Open-Meteo'});
+}
+
+const ultimaHoraIR = fetch(gibs('GOES-East_ABI_Band13_Clean_Infrared', 6, 'png').replace('{z}', 6).replace('{y}', 32).replace('{x}', 17))
+  .then(r => new Date(r.headers.get('layer-time-actual')).getTime())
+  .catch(() => Math.floor((Date.now() - 40 * 60e3) / 600e3) * 600e3);
+const radar = fetch('https://api.rainviewer.com/public/weather-maps.json').then(r => r.json());
+
+Promise.allSettled([ultimaHoraIR, pedirPronostico(), radar]).then(([ir, pron, rv]) => {
+  const t0 = ir.value;
+  for (let t = t0 - PASADO; t <= t0; t += PASO_PASADO) {
+    const iso = new Date(t).toISOString().slice(0, 19) + 'Z';
+    linea.push({t, futuro: false, iso, lluvia: new Tormentas({maxNativeZoom: 6, maxZoom: 12, opacity: 0, tiempo: iso}).addTo(m)});
+  }
+  ahora = linea.length - 1;
+  if (rv.status === 'fulfilled') {
+    const j = rv.value;
+    for (const c of linea) {
+      const f = j.radar.past.find(f => Math.abs(f.time * 1000 - c.t) < 5 * 60e3);
+      if (f) c.radar = L.tileLayer(j.host + f.path + '/256/{z}/{x}/{y}/2/1_1.png',
+        {maxNativeZoom: 7, maxZoom: 12, opacity: 0, attribution: 'RainViewer'}).addTo(m);
+    }
+  }
+  if (pron.status === 'fulfilled') {
+    const d = pron.value;
+    d.t.forEach((s, h) => {
+      if (s * 1000 <= t0 + 10 * 60e3 || linea.length - ahora > FUTURO) return;
+      linea.push({t: s * 1000, futuro: true, h,
+        lluvia: imagen(d.lluvia.map(p => p[h]), v => interp(ESC_MM, v)).addTo(m)});
+    });
+  }
+  horas.pronostico = pron.status === 'fulfilled';
+  i = ahora;
+  mostrar();
+  nota();
+  setInterval(() => {
+    if (!play || !linea.length) return;
+    // se queda un momento en «ahora» y en el último cuadro, para que se alcance a leer
+    if (i === ahora || i === linea.length - 1) { espera = !espera; if (espera) return; }
+    i = (i + 1) % linea.length;
+    mostrar();
+  }, 800);
+});
+let espera = false;
+
+// Las nubes se cargan solo si se encienden: pasado con la foto real del satélite, futuro con el modelo.
+function cargarNubes() {
+  if (linea.some(c => c.nubes)) return;
+  pedirPronostico().catch(() => null).then(d => {
+    for (const c of linea) {
+      c.nubes = c.futuro
+        ? (d ? imagen(d.nubes.map(p => p[c.h]), v => v < 15 ? null : [226, 232, 240, v / 100 * .75]) : null)
+        : L.tileLayer(gibs('GOES-East_ABI_GeoColor', 7, 'jpeg', c.iso), {maxNativeZoom: 7, maxZoom: 12, opacity: 0, attribution: 'NASA GIBS'});
+      c.nubes?.addTo(m);
+    }
+    mostrar();
+  });
+}
 
 function mostrar() {
-  capas.forEach((c, k) => c.setOpacity(radarOn && k === i ? .85 : 0));
-  if (!frames.length) return;
-  const ultimo = i === frames.length - 1;
-  $('t').textContent = 'Radar ' + hhmm(new Date(frames[i].time * 1000));
-  $('st').textContent = ultimo ? ' · ahora' : '';
-  $('prog').style.width = ((i + 1) / frames.length * 100) + '%';
+  linea.forEach((c, k) => {
+    for (const capa of ['lluvia', 'radar', 'nubes']) c[capa]?.setOpacity(k === i && on[capa] ? OPACIDAD[capa] : 0);
+  });
+  const c = linea[i];
+  if (!c) return;
+  const min = Math.round((Date.now() - c.t) / 60e3), h = Math.round((c.t - Date.now()) / 3600e3);
+  $('t').textContent = (c.futuro ? 'Pronóstico ' : 'Satélite ') + hhmm(new Date(c.t));
+  const hace = min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')}`;
+  $('st').textContent = c.futuro ? ` · en ${Math.max(h, 1)} h` : i === ahora ? ` · lo último (hace ${hace})` : ` · hace ${hace}`;
+  $('prog').style.width = ((i + 1) / linea.length * 100) + '%';
+  $('prog').style.background = c.futuro ? '#facc15' : '#60a5fa';
+  $('marca').style.left = ((ahora + 1) / linea.length * 100) + '%';
 }
-const alternar = (btn, capa) => btn.onclick = () => {
-  m.hasLayer(capa) ? m.removeLayer(capa) : capa.addTo(m); btn.classList.toggle('on'); nota();
+// Tocar la barra salta a ese momento.
+$('barra').parentElement.onclick = (ev) => {
+  const r = $('barra').getBoundingClientRect();
+  i = Math.min(linea.length - 1, Math.max(0, Math.floor((ev.clientX - r.left) / r.width * linea.length)));
+  play = false; $('pp').textContent = '▶'; mostrar();
 };
-alternar($('nu'), nubes); alternar($('sa'), sat); alternar($('to'), tormentas);
-$('pp').onclick = () => {
-  play = !play; $('pp').textContent = play ? '❚❚' : '▶';
-  if (!play) { i = frames.length - 1; mostrar(); }
+$('pp').onclick = () => { play = !play; $('pp').textContent = play ? '❚❚' : '▶'; };
+const boton = (id, capa, alPrender) => $(id).onclick = () => {
+  on[capa] = !on[capa]; $(id).classList.toggle('on'); if (on[capa] && alPrender) alPrender(); mostrar(); nota();
 };
-$('ra').onclick = () => { radarOn = !radarOn; $('ra').classList.toggle('on'); mostrar(); nota(); };
+boton('to', 'lluvia'); boton('ra', 'radar'); boton('nu', 'nubes', cargarNubes);
+$('sa').onclick = () => { m.hasLayer(sat) ? m.removeLayer(sat) : sat.addTo(m); $('sa').classList.toggle('on'); nota(); };
 
 function nota() {
   const h = (iso) => iso ? hhmm(new Date(iso)) : '…';
   const p = [];
-  if (m.hasLayer(tormentas)) p.push(`Tormentas ${h(horas.ir)}: nubes de tormenta vistas por satélite, donde casi seguro llueve`);
-  if (radarOn) p.push('Radar: lluvia medida en tierra (no hay radares en casi todo Ecuador)');
-  if (m.hasLayer(sat)) p.push(`Lluvia NASA ${h(horas.sat)}: más exacta pero con horas de retraso`);
-  if (m.hasLayer(nubes)) p.push('Nubes: foto real del satélite');
+  if (on.lluvia) p.push('Lluvia: hasta ahora, tormentas vistas por el satélite infrarrojo; después, la que pronostica el modelo' +
+    (horas.pronostico === false ? ' (pronóstico no disponible)' : ''));
+  if (on.radar) p.push('Radar: medido en tierra, solo pasado (casi no hay radares en Ecuador)');
+  if (on.nubes) p.push('Nubes: foto del satélite y, después, nubosidad pronosticada');
+  if (m.hasLayer(sat)) p.push(`Lluvia NASA ${h(horas.sat)}: fija, más exacta pero con ~5 h de retraso`);
   $('nota').textContent = p.join(' · ');
 }
 nota();
