@@ -109,6 +109,7 @@ private class Estado {
     var error by mutableStateOf("")
     var cargando by mutableStateOf(false)
     var etapa by mutableStateOf("")
+    var satelite by mutableStateOf<Observacion?>(null)
 }
 
 /** El último pronóstico bajado: se muestra al instante al abrir, mientras llega el nuevo. */
@@ -148,6 +149,7 @@ private fun App() {
             e.etapa = "Descargando el pronóstico…"
             val json = withContext(Dispatchers.IO) { descargarPronostico(lat, lon) }
             e.datos = parsear(json)
+            scope.launch { e.satelite = withContext(Dispatchers.IO) { observarSatelite(lat, lon) } }
             e.lat = lat
             e.lon = lon
             // El nombre llega después: el pronóstico ya se ve mientras el Geocoder responde.
@@ -159,6 +161,7 @@ private fun App() {
             }
             cache(ctx).edit().putString("json", json).putString("lugar", e.lugar)
                 .putFloat("lat", lat.toFloat()).putFloat("lon", lon.toFloat()).apply()
+            actualizarWidgets(ctx)
         } catch (x: Exception) {
             e.error = mensajeError(x)
         } finally {
@@ -201,7 +204,7 @@ private fun App() {
                             Cargando(e.etapa, e.error)
                         } else {
                             if (e.error.isNotEmpty()) Aviso("No se pudo actualizar: ${e.error}. Desliza hacia abajo para reintentar.")
-                            Detalle(d, e.lugar)
+                            Detalle(d, e.lugar, e.satelite)
                         }
                         Spacer(Modifier.height(24.dp))
                     }
@@ -294,7 +297,7 @@ private fun hora(iso: String) = iso.substring(11, 16)
 private val formatoDia = DateTimeFormatter.ofPattern("EEE d", Locale("es"))
 
 @Composable
-private fun Detalle(p: Pronostico, lugar: String) {
+private fun Detalle(p: Pronostico, lugar: String, sat: Observacion?) {
     val a = p.actual
     val hoy = p.dias[0]
     // Encabezado
@@ -311,6 +314,15 @@ private fun Detalle(p: Pronostico, lugar: String) {
             "Actualizado a las ${hora(a.hora)}", color = Color.White.copy(alpha = .55f), fontSize = 12.sp,
             modifier = Modifier.padding(top = 10.dp),
         )
+        // La intensidad de los últimos 15 min (modelo) y lo que de verdad ve el satélite encima tuyo.
+        val medido = listOfNotNull(
+            lluviaAhora(a.lluvia)?.let { "💧 $it" to Celeste },
+            sat?.let {
+                val h = runCatching { java.time.Instant.parse(it.hora).atZone(java.time.ZoneId.systemDefault()).toLocalTime().toString().take(5) }.getOrDefault("")
+                "🛰️ $h · ${textoSatelite(it.temp)}" to if ((it.temp ?: 0) <= -52) Color(0xFFFCA5A5) else Color.White.copy(alpha = .8f)
+            },
+        )
+        medido.forEach { (t, c) -> Text(t, color = c, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
     }
 
     Tarjeta("🌧️  Lluvia · próximas 2 horas") {

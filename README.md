@@ -17,6 +17,12 @@ App de Android (Kotlin + Jetpack Compose, mismo stack que Lince) con el clima de
 - Se actualiza sola cada 10 min y al volver a la app; también deslizando hacia abajo. Al abrir muestra al instante
   el último pronóstico guardado mientras baja el nuevo, y reintenta 3 veces si la red se cuelga.
 
+- **Lo que pasa ahora, no solo el modelo**: la intensidad de la lluvia del último cuarto de hora en mm/h (ligera,
+  moderada, fuerte) y lo que ve el satélite infrarrojo justo encima tuyo («Tormenta fuerte encima», con su hora).
+  El modelo puede no ver una tormenta que ya está sobre ti; el satélite sí.
+- **Widget** para la pantalla de inicio (4×2, redimensionable): temperatura, sensación, máx/mín y la lluvia de las
+  próximas 2 horas. Se refresca cada 30 min con la última ubicación que usó la app, y al abrirla.
+
 Sin permiso de ubicación muestra Guayaquil y lo dice junto al nombre.
 
 Al abrir, avisa si hay una versión nueva en los [releases](https://github.com/edgarguitarist/clima/releases) de GitHub, la baja y abre el instalador (igual que Lince). «Ahora no» la vuelve a ofrecer al día siguiente.
@@ -51,6 +57,8 @@ prefijo `CLIMA_`); si no, con la debug.
 |---|---|
 | `Clima.kt` | Pide y parsea el pronóstico de Open-Meteo; textos e íconos de los códigos WMO |
 | `Actualizador.kt` | Aviso de versión nueva desde los releases de GitHub |
+| `Satelite.kt` | Lee el infrarrojo de GOES-East sobre tu ubicación y lo traduce a «tormenta encima» |
+| `Widget.kt` | Widget de pantalla de inicio |
 | `Ubicacion.kt` | Ubicación actual y nombre del lugar |
 | `MainActivity.kt` | Pantallas: pronóstico y mapa |
 | `assets/mapa.html` | El mapa (Leaflet embebido, en un WebView) |

@@ -134,11 +134,19 @@ private val CODIGOS = mapOf(
     61 to ("Lluvia ligera" to "🌦️"), 63 to ("Lluvia" to "🌧️"), 65 to ("Lluvia fuerte" to "🌧️"),
     66 to ("Lluvia helada" to "🌧️"), 67 to ("Lluvia helada fuerte" to "🌧️"),
     71 to ("Nevada ligera" to "🌨️"), 73 to ("Nevada" to "🌨️"), 75 to ("Nevada fuerte" to "❄️"),
-    77 to ("Granizo fino" to "🌨️"), 80 to ("Chubascos ligeros" to "🌦️"), 81 to ("Chubascos" to "🌧️"),
-    82 to ("Chubascos violentos" to "⛈️"), 85 to ("Chubascos de nieve" to "🌨️"),
-    86 to ("Chubascos de nieve fuertes" to "❄️"), 95 to ("Tormenta" to "⛈️"),
+    77 to ("Granizo fino" to "🌨️"), 80 to ("Lluvia ligera a ratos" to "🌦️"), 81 to ("Lluvia a ratos" to "🌧️"),
+    82 to ("Aguaceros fuertes" to "⛈️"), 85 to ("Chubascos de nieve" to "🌨️"),
+    86 to ("Chubascos de nieve fuertes" to "❄️"), 95 to ("Tormenta eléctrica" to "⛈️"),
     96 to ("Tormenta con granizo" to "⛈️"), 99 to ("Tormenta con granizo fuerte" to "⛈️"),
 )
+
+/** Lo que llovió en los últimos 15 min, como intensidad (escala usual: ligera < 2,5 mm/h < moderada < 7,6 < fuerte). */
+fun lluviaAhora(mm15: Double): String? {
+    if (mm15 < 0.05) return null
+    val porHora = mm15 * 4
+    val tipo = when { porHora < 2.5 -> "ligera"; porHora < 7.6 -> "moderada"; porHora < 50 -> "fuerte"; else -> "torrencial" }
+    return "Lluvia $tipo · %.1f mm/h".format(porHora)
+}
 
 fun texto(codigo: Int) = CODIGOS[codigo]?.first ?: "Desconocido"
 fun icono(codigo: Int, esDia: Boolean = true): String {
