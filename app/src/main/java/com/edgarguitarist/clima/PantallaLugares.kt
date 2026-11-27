@@ -98,7 +98,7 @@ fun TarjetaLugares(filas: List<FilaLugar>, sel: String?, elegir: (String?) -> Un
                     val estado = when {
                         f.datos == null -> "Cargando…"
                         (f.sat?.temp ?: 0) <= -52 -> "🛰️ Tormenta encima"
-                        else -> lluviaAhora(a!!.lluvia) ?: resumenLluvia(f.datos.cuartos.take(4)).replace("2 horas", "hora")
+                        else -> lluviaAhora(a!!.lluvia) ?: resumenLluvia(f.datos.cuartos.take(4)).replace("las próximas 2 horas", "la próxima hora")
                     }
                     Text(estado, color = if ((f.sat?.temp ?: 0) <= -52) Color(0xFFFCA5A5) else Celeste, fontSize = 12.sp)
                 }

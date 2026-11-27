@@ -122,6 +122,6 @@ private fun GraficoMarea(m: Marea, ahora: ZonedDateTime) {
             pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f)))
         nivelEn(m, ahora)?.let { drawCircle(Color.White, 5.dp.toPx(), Offset(xa, y(it))) }
         val t = medidor.measure("Ahora", TextStyle(color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold))
-        drawText(t, topLeft = Offset((xa - t.size.width / 2).coerceIn(0f, size.width - t.size.width), 0f))
+        drawText(t, topLeft = Offset((xa + 4.dp.toPx()).coerceAtMost(size.width - t.size.width), abajo - t.size.height)) // abajo: arriba chocaba con la etiqueta de la pleamar
     }
 }
