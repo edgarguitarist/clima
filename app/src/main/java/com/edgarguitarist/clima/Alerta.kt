@@ -17,8 +17,13 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import java.time.Duration
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 
 data class Aviso(val titulo: String, val texto: String)
 
@@ -39,6 +44,24 @@ fun debeAvisar(lugar: String, cuartos: List<Cuarto>, topeSatelite: Int?): Aviso?
     return null
 }
 
+/** La próxima pleamar dentro de 3 h que coincide (±2 h) con lluvia fuerte prevista (>= 1 mm/h y prob >= 50). Pura. */
+fun pleamarEnRiesgo(extremos: List<Extremo>, horas: List<Hora>, ahora: ZonedDateTime): Extremo? {
+    val p = extremos.filter { it.alta && !it.hora.isBefore(ahora) }.minByOrNull { it.hora } ?: return null
+    if (Duration.between(ahora, p.hora).toMinutes() > 180) return null
+    val llueve = horas.any {
+        val t = LocalDateTime.parse(it.hora).atZone(ahora.zone)
+        abs(Duration.between(t, p.hora).toMinutes()) <= 120 && it.lluvia >= 1.0 && it.prob >= 50
+    }
+    return if (llueve) p else null
+}
+
+fun textoPleamar(p: Extremo, aguaje: Boolean) =
+    Aviso("🌊 Marea alta y lluvia", "Pleamar de ${String.format(Locale("es"), "%.2f", p.altura)} m a las ${p.hora.toLocalTime().toString().take(5)} " +
+        "con lluvia fuerte prevista: riesgo de inundación en zonas bajas" + if (aguaje) " · aguaje" else "")
+
+fun avisoPleamar(extremos: List<Extremo>, horas: List<Hora>, ahora: ZonedDateTime, aguaje: Boolean): Aviso? =
+    pleamarEnRiesgo(extremos, horas, ahora)?.let { textoPleamar(it, aguaje) }
+
 private fun hayPermiso(ctx: Context) =
     Build.VERSION.SDK_INT < 33 || ctx.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
@@ -47,10 +70,14 @@ class AlertaLluvia(private val ctx: Context, params: WorkerParameters) : Corouti
     override suspend fun doWork(): Result {
         if (!hayPermiso(ctx)) return Result.success()
         val estado = ctx.getSharedPreferences("alertas", Context.MODE_PRIVATE)
-        for (l in Lugares.leer(ctx).filter { it.avisar }) {
+        val lugares = Lugares.leer(ctx).filter { it.avisar }
+        // La marea es la misma para todos los lugares: se descarga una sola vez y solo si alguno está cerca del río.
+        val marea = if (lugares.any { mareaAplica(it.lat, it.lon) }) runCatching { descargarMarea() }.getOrNull() else null
+        for (l in lugares) {
             // Un lugar que falla no impide revisar los demás; se reintenta en la siguiente vuelta.
             runCatching {
-                val cuartos = parsear(descargarPronostico(l.lat, l.lon)).cuartos
+                val pron = parsear(descargarPronostico(l.lat, l.lon))
+                val cuartos = pron.cuartos
                 val aviso = debeAvisar(l.nombre, cuartos, observarSatelite(l.lat, l.lon)?.temp)
                 val clave = "ultimo_" + l.nombre
                 val ahora = System.currentTimeMillis()
@@ -60,12 +87,22 @@ class AlertaLluvia(private val ctx: Context, params: WorkerParameters) : Corouti
                     notificar(l.nombre, aviso)
                     estado.edit().putLong(clave, ahora).apply()
                 }
+                if (marea != null && mareaAplica(l.lat, l.lon)) {
+                    val t = ZonedDateTime.now(ZoneId.of("America/Guayaquil"))
+                    val p = pleamarEnRiesgo(marea.extremos, pron.horas, t)
+                    val marca = p?.hora?.toEpochSecond() ?: 0L
+                    // Una sola vez por pleamar, aunque haya varios lugares o varias vueltas.
+                    if (p != null && estado.getLong("pleamar", 0L) != marca) {
+                        notificar("pleamar", textoPleamar(p, esAguaje(t)), 0x7EA)
+                        estado.edit().putLong("pleamar", marca).apply()
+                    }
+                }
             }
         }
         return Result.success()
     }
 
-    private fun notificar(lugar: String, aviso: Aviso) {
+    private fun notificar(lugar: String, aviso: Aviso, id: Int = lugar.hashCode()) {
         val nm = NotificationManagerCompat.from(ctx)
         nm.createNotificationChannel(
             NotificationChannelCompat.Builder(CANAL, NotificationManager.IMPORTANCE_DEFAULT).setName("Aviso de lluvia").build(),
@@ -78,7 +115,7 @@ class AlertaLluvia(private val ctx: Context, params: WorkerParameters) : Corouti
             .setSmallIcon(R.drawable.ic_lluvia).setContentTitle(aviso.titulo).setContentText(aviso.texto)
             .setContentIntent(abrir).setAutoCancel(true).build()
         @Suppress("MissingPermission") // ya se comprobó al inicio de doWork
-        nm.notify(lugar.hashCode(), n)
+        nm.notify(id, n)
     }
 }
 
