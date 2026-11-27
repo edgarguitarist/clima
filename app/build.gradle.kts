@@ -57,6 +57,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.work:work-runtime-ktx:2.10.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    implementation("com.airbnb.android:lottie-compose:6.7.1") // iconos animados Meteocons
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303") // en los tests de JVM el org.json de Android es un stub
