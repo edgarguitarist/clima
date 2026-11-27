@@ -20,6 +20,9 @@ App de Android (Kotlin + Jetpack Compose, mismo stack que Lince) con el clima de
 - **Lo que pasa ahora, no solo el modelo**: la intensidad de la lluvia del último cuarto de hora en mm/h (ligera,
   moderada, fuerte) y lo que ve el satélite infrarrojo justo encima tuyo («Tormenta fuerte encima», con su hora).
   El modelo puede no ver una tormenta que ya está sobre ti; el satélite sí.
+- **Se coteja con la estación del aeropuerto** (METAR, cada hora, aviationweather.gov) si hay una a menos de 20 km:
+  los modelos dan llovizna en Guayaquil mucho más de lo que llueve, así que si la estación no ve lluvia, el «ahora»
+  pasa a lo que ella reporta (con nota de lo que daba el modelo), y al revés si llueve y el modelo no lo ve.
 - **Titular** arriba de todo que responde «¿necesito paraguas?» («☔ Lluvia hasta las 20:30», «😎 Sin lluvia en
   las próximas 2 horas»), y avisa si el satélite ve una tormenta encima aunque el modelo no la vea.
 - **Lugares guardados** (Guayaquil y Durán de entrada) con chips arriba, una tarjeta «Tus lugares ahora» para comparar
@@ -78,6 +81,7 @@ prefijo `CLIMA_`); si no, con la debug.
 |---|---|
 | `Clima.kt` | Pide y parsea el pronóstico de Open-Meteo; textos e íconos de los códigos WMO |
 | `Actualizador.kt` | Aviso de versión nueva desde los releases de GitHub |
+| `Estacion.kt` | Estación meteorológica cercana (METAR) para corregir el «ahora» del modelo |
 | `Satelite.kt` | Lee el infrarrojo de GOES-East sobre tu ubicación y lo traduce a «tormenta encima» |
 | `Lugares.kt`, `PantallaLugares.kt` | Lugares guardados, buscador y su pantalla |
 | `Alerta.kt` | Aviso de lluvia en segundo plano |

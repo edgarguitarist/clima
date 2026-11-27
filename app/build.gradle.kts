@@ -12,8 +12,8 @@ android {
         applicationId = "com.edgarguitarist.clima"
         minSdk = 28
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.8.0"
+        versionCode = 9
+        versionName = "0.8.1"
     }
 
     // Misma llave de release que Lince si está configurada (CLIMA_* o, si no, LINCE_*); si no, la debug.

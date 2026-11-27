@@ -28,7 +28,10 @@ data class Dia(
     val uvMax: Double,
     val vientoMax: Double = 0.0, val rafagasMax: Double = 0.0, val dirViento: Double = 0.0, val horasLluvia: Double = 0.0,
 )
-data class Pronostico(val actual: Actual, val cuartos: List<Cuarto>, val horas: List<Hora>, val dias: List<Dia>)
+data class Pronostico(
+    val actual: Actual, val cuartos: List<Cuarto>, val horas: List<Hora>, val dias: List<Dia>,
+    val estacion: Estacion? = null, val modelo: Int? = null, // modelo: el código que daba el modelo si la estación lo corrigió
+)
 
 private const val ACTUAL = "temperature_2m,apparent_temperature,relative_humidity_2m,dew_point_2m,precipitation," +
     "weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m,uv_index,visibility,is_day"
@@ -50,7 +53,9 @@ fun descargarPronostico(lat: Double, lon: Double): String {
         c.readTimeout = 12_000
         try {
             if (c.responseCode != 200) error("Open-Meteo respondió ${c.responseCode}")
-            return c.inputStream.bufferedReader().use { it.readText() }
+            val j = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
+            observarEstacion(lat, lon)?.let { j.put("estacion", it) } // viaja con el pronóstico, también a la caché
+            return j.toString()
         } catch (e: Exception) {
             ultimo = e
             Thread.sleep(1_000L * (intento + 1))
@@ -133,7 +138,9 @@ fun parsear(json: String): Pronostico {
             d.op("precipitation_hours", it),
         )
     }
-    return Pronostico(actual, cuartos, horas, dias)
+    val est = j.optJSONObject("estacion")?.let(::leerEstacion)
+    val (a2, c2, modelo) = corregir(actual, cuartos, est)
+    return Pronostico(a2, c2, horas, dias, est, modelo)
 }
 
 // Códigos WMO que usa Open-Meteo
@@ -152,12 +159,14 @@ private val CODIGOS = mapOf(
 )
 
 /** Una frase arriba de todo que responde «¿necesito paraguas?», con el satélite si ve una tormenta encima. */
-fun titular(cuartos: List<Cuarto>, topeSatelite: Int?): String {
+fun titular(cuartos: List<Cuarto>, topeSatelite: Int?, desmentido: Boolean = false): String {
     val lloviendo = cuartos.firstOrNull()?.let { it.lluvia >= 0.1 } == true
     val viene = cuartos.any { it.lluvia >= 0.1 }
     return when {
         !lloviendo && topeSatelite != null && topeSatelite <= -52 -> "⛈️ El satélite ve una tormenta encima: puede llover en cualquier momento"
         lloviendo -> "☔ " + resumenLluvia(cuartos)
+        // La estación ya desmintió la llovizna de ahora y el satélite no ve nubes de lluvia: lo que sigue es el mismo modelo.
+        viene && desmentido && topeSatelite == null -> "🌂 Ahora no llueve; el modelo da " + resumenLluvia(cuartos).replaceFirstChar { it.lowercase() }
         viene -> "☂️ " + resumenLluvia(cuartos) + ": lleva paraguas"
         cuartos.any { it.prob >= 40 } -> "🌂 Puede llover: mejor lleva paraguas"
         else -> "😎 Sin lluvia en las próximas 2 horas"
