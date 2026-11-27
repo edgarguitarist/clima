@@ -108,7 +108,7 @@ fun HojaDia(d: Dia, horas: List<Hora>, cerrar: () -> Unit) {
 private fun Encabezado(titulo: String, codigo: Int, dia: Boolean, temp: Double, sub: String) {
     Text(titulo, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
-        IconoTiempo(codigo, dia, 56)
+        IconoTiempo(codigo, dia, 64, animado = true)
         Column(Modifier.padding(start = 12.dp)) {
             Text("${temp.roundToInt()}° · ${texto(codigo)}", fontSize = 22.sp, fontWeight = FontWeight.Light)
             Text(sub, color = Ambar, fontSize = 13.sp)
@@ -131,10 +131,10 @@ private fun Grilla(datos: List<Pair<String, String>>) {
 }
 
 /**
- * Punto único para dibujar el ícono del tiempo: hoy es el emoji; cuando lleguen los íconos animados se cambia solo
- * aquí. `tam` en dp.
+ * Punto único para dibujar el ícono del tiempo (Meteocons, MIT). Animado solo donde se luce (el grande de arriba y
+ * los encabezados); en las listas, fijo, para no tener decenas de animaciones gastando batería. `tam` en dp.
  */
 @Composable
-fun IconoTiempo(codigo: Int, esDia: Boolean, tam: Int) {
-    Text(icono(codigo, esDia), fontSize = (tam * .82f).sp)
+fun IconoTiempo(codigo: Int, esDia: Boolean, tam: Int, animado: Boolean = false) {
+    IconoClima(codigo = codigo, esDia = esDia, tam = tam.dp, animado = animado)
 }

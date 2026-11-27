@@ -25,7 +25,14 @@ App de Android (Kotlin + Jetpack Compose, mismo stack que Lince) con el clima de
 - **Lugares guardados** (Guayaquil y Durán de entrada) con chips arriba, una tarjeta «Tus lugares ahora» para comparar
   de un vistazo (por ejemplo, cómo está Guayaquil antes de salir de Durán) y un buscador para agregar más.
 - **Aviso de lluvia**: cada ~15 min (WorkManager) revisa los lugares con el aviso activado y notifica si va a llover
-  en la próxima hora o si el satélite ve una tormenta encima. No repite el mismo aviso antes de 3 h.
+  en la próxima hora o si el satélite ve una tormenta encima. No repite el mismo aviso antes de 3 h. También avisa
+  si una pleamar de las próximas horas coincide con lluvia (riesgo de que se represe el agua), una vez por pleamar.
+- **Tocar una hora o un día** abre su detalle: lluvia e intensidad, probabilidad, viento y ráfagas, humedad, UV,
+  visibilidad; el día suma lluvia total, horas con lluvia, amanecer/atardecer y su hora por hora.
+- **Deslizar** a los lados cambia entre «Aquí» y los lugares guardados.
+- **Las tarjetas se ordenan según lo que importa ahora**: si viene lluvia, la marea coincide con lluvia o el aire está
+  malo, esa tarjeta sube.
+- **Íconos animados** (Meteocons, MIT) y **fondo animado** según el tiempo: gotas, nubes, sol, estrellas, niebla.
 - **Calidad del aire** (Open-Meteo / Copernicus): índice US-AQI con consejo, PM2.5, PM10, O₃ y NO₂, y el peor valor de
   las próximas 24 h. Polen no: Open-Meteo solo lo da para Europa.
 - **Marea del río Guayas** (para lugares a menos de ~60 km de Guayaquil): nivel ahora y si sube o baja, próxima
@@ -34,7 +41,8 @@ App de Android (Kotlin + Jetpack Compose, mismo stack que Lince) con el clima de
   predicción oficial de INOCAR para la estación Guayaquil-Río (Durán queda enfrente); si no responde, el modelo de
   Open-Meteo en el estuario, que no llega río adentro.
 - **Widget** para la pantalla de inicio (4×2, redimensionable): temperatura, sensación, máx/mín y la lluvia de las
-  próximas 2 horas. Se refresca cada 30 min con la última ubicación que usó la app, y al abrirla.
+  próximas 2 horas. Se refresca cada 30 min con la última ubicación que usó la app, y al abrirla. Y uno **chico
+  (2×2)**: temperatura y «Lluvia en 20 min» / «Para en 15 min».
 
 Sin permiso de ubicación muestra Guayaquil y lo dice junto al nombre.
 
@@ -75,7 +83,10 @@ prefijo `CLIMA_`); si no, con la debug.
 | `Alerta.kt` | Aviso de lluvia en segundo plano |
 | `Aire.kt`, `ui/TarjetaAire.kt` | Calidad del aire |
 | `Marea.kt`, `PantallaMarea.kt` | Marea del río Guayas (INOCAR), aguaje y su gráfico |
-| `Widget.kt` | Widget de pantalla de inicio |
+| `Widget.kt`, `WidgetChico.kt` | Widgets de pantalla de inicio (4×2 y 2×2) |
+| `DetalleHoraDia.kt` | Hojas de detalle de una hora o un día |
+| `Iconos.kt`, `assets/iconos/` | Íconos animados Meteocons (Lottie) |
+| `FondoAnimado.kt` | Fondo animado según el tiempo |
 | `Ubicacion.kt` | Ubicación actual y nombre del lugar |
 | `MainActivity.kt` | Pantallas: pronóstico y mapa |
 | `assets/mapa.html` | El mapa (Leaflet embebido, en un WebView) |

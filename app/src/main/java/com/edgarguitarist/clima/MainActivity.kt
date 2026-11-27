@@ -365,7 +365,7 @@ private fun Detalle(p: Pronostico, lugar: String, sat: Observacion?, aire: Aire?
     // Encabezado
     Column(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Text("📍 ${lugar.ifEmpty { "Mi ubicación" }}", fontSize = 17.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
-        Box(Modifier.padding(top = 12.dp)) { IconoTiempo(a.codigo, a.esDia, 92) }
+        Box(Modifier.padding(top = 12.dp)) { IconoTiempo(a.codigo, a.esDia, 120, animado = true) }
         Text("${r(a.temp)}°", fontSize = 104.sp, fontWeight = FontWeight.Thin, lineHeight = 104.sp)
         Text(texto(a.codigo), fontSize = 21.sp, fontWeight = FontWeight.Medium)
         Text(
