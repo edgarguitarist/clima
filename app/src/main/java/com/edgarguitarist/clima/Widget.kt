@@ -19,13 +19,7 @@ class ClimaWidget : AppWidgetProvider() {
         val pendiente = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val c = ctx.getSharedPreferences("cache", Context.MODE_PRIVATE)
-                // Sin ubicación en segundo plano: se usan las coordenadas que guardó la app (o Guayaquil).
-                val lat = if (c.contains("lat")) c.getFloat("lat", 0f).toDouble() else -2.19
-                val lon = if (c.contains("lon")) c.getFloat("lon", 0f).toDouble() else -79.89
-                val json = descargarPronostico(lat, lon)
-                parsear(json) // valida antes de pisar la caché
-                c.edit().putString("json", json).apply()
+                refrescarCache(ctx)
                 pintar(ctx, manager, ids)
             } catch (_: Exception) {
                 // sin red o respuesta rara: se queda lo que ya se ve
@@ -36,10 +30,22 @@ class ClimaWidget : AppWidgetProvider() {
     }
 }
 
+/** Descarga el pronóstico y lo guarda en la caché (lo comparten los dos widgets). Lanza si falla. */
+internal fun refrescarCache(ctx: Context) {
+    val c = ctx.getSharedPreferences("cache", Context.MODE_PRIVATE)
+    // Sin ubicación en segundo plano: se usan las coordenadas que guardó la app (o Guayaquil).
+    val lat = if (c.contains("lat")) c.getFloat("lat", 0f).toDouble() else -2.19
+    val lon = if (c.contains("lon")) c.getFloat("lon", 0f).toDouble() else -79.89
+    val json = descargarPronostico(lat, lon)
+    parsear(json) // valida antes de pisar la caché
+    c.edit().putString("json", json).apply()
+}
+
 /** Vuelve a pintar todos los widgets desde la caché, sin red. La app lo llama tras cargar datos. */
 fun actualizarWidgets(ctx: Context) {
     val m = AppWidgetManager.getInstance(ctx)
     pintar(ctx, m, m.getAppWidgetIds(ComponentName(ctx, ClimaWidget::class.java)))
+    pintarChico(ctx, m, m.getAppWidgetIds(ComponentName(ctx, ClimaWidgetChico::class.java)))
 }
 
 private fun pintar(ctx: Context, manager: AppWidgetManager, ids: IntArray) {
