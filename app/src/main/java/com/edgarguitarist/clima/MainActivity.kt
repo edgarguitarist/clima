@@ -232,10 +232,8 @@ private fun App() {
     val lugarSel = e.lugares.find { it.nombre == e.sel }
     val d = if (lugarSel == null) e.datos else e.datosLugar[lugarSel.nombre]
     var hoja by remember { mutableStateOf(false) }
-    val colores = fondo(d?.actual)
-    val arriba by animateColorAsState(colores.first, tween(800), label = "fondo")
-    val medio by animateColorAsState(colores.second, tween(800), label = "fondo2")
-    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(arriba, medio, Fondo)))) {
+    Box(Modifier.fillMaxSize()) {
+        FondoAnimado(d?.actual) // degradado según el cielo, con lluvia, nubes o estrellas animadas
         Column(Modifier.fillMaxSize().safeDrawingPadding()) {
             Pestanas(pestana) { pestana = it }
             SelectorLugares(e.lugares, lugarSel?.nombre, { e.sel = it }) { hoja = true }
@@ -287,14 +285,6 @@ private fun App() {
     AvisoActualizacion()
 }
 
-/** Colores del degradado de fondo según el cielo: azul de día, índigo de noche, gris con lluvia o nubes. */
-private fun fondo(a: Actual?): Pair<Color, Color> = when {
-    a == null -> Color(0xFF1E3A8A) to Color(0xFF172554)
-    a.codigo >= 51 -> if (a.esDia) Color(0xFF334155) to Color(0xFF1E293B) else Color(0xFF1E293B) to Color(0xFF0F172A)
-    !a.esDia -> Color(0xFF1E1B4B) to Color(0xFF0F172A)
-    a.codigo >= 3 -> Color(0xFF3B5578) to Color(0xFF1E2F4A)
-    else -> Color(0xFF2563EB) to Color(0xFF1E3A8A)
-}
 
 @Composable
 private fun Pestanas(actual: Int, elegir: (Int) -> Unit) {
