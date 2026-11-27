@@ -20,6 +20,14 @@ App de Android (Kotlin + Jetpack Compose, mismo stack que Lince) con el clima de
 - **Lo que pasa ahora, no solo el modelo**: la intensidad de la lluvia del último cuarto de hora en mm/h (ligera,
   moderada, fuerte) y lo que ve el satélite infrarrojo justo encima tuyo («Tormenta fuerte encima», con su hora).
   El modelo puede no ver una tormenta que ya está sobre ti; el satélite sí.
+- **Titular** arriba de todo que responde «¿necesito paraguas?» («☔ Lluvia hasta las 20:30», «😎 Sin lluvia en
+  las próximas 2 horas»), y avisa si el satélite ve una tormenta encima aunque el modelo no la vea.
+- **Lugares guardados** (Guayaquil y Durán de entrada) con chips arriba, una tarjeta «Tus lugares ahora» para comparar
+  de un vistazo (por ejemplo, cómo está Guayaquil antes de salir de Durán) y un buscador para agregar más.
+- **Aviso de lluvia**: cada ~15 min (WorkManager) revisa los lugares con el aviso activado y notifica si va a llover
+  en la próxima hora o si el satélite ve una tormenta encima. No repite el mismo aviso antes de 3 h.
+- **Calidad del aire** (Open-Meteo / Copernicus): índice US-AQI con consejo, PM2.5, PM10, O₃ y NO₂, y el peor valor de
+  las próximas 24 h. Polen no: Open-Meteo solo lo da para Europa.
 - **Widget** para la pantalla de inicio (4×2, redimensionable): temperatura, sensación, máx/mín y la lluvia de las
   próximas 2 horas. Se refresca cada 30 min con la última ubicación que usó la app, y al abrirla.
 
@@ -58,6 +66,9 @@ prefijo `CLIMA_`); si no, con la debug.
 | `Clima.kt` | Pide y parsea el pronóstico de Open-Meteo; textos e íconos de los códigos WMO |
 | `Actualizador.kt` | Aviso de versión nueva desde los releases de GitHub |
 | `Satelite.kt` | Lee el infrarrojo de GOES-East sobre tu ubicación y lo traduce a «tormenta encima» |
+| `Lugares.kt`, `PantallaLugares.kt` | Lugares guardados, buscador y su pantalla |
+| `Alerta.kt` | Aviso de lluvia en segundo plano |
+| `Aire.kt`, `ui/TarjetaAire.kt` | Calidad del aire |
 | `Widget.kt` | Widget de pantalla de inicio |
 | `Ubicacion.kt` | Ubicación actual y nombre del lugar |
 | `MainActivity.kt` | Pantallas: pronóstico y mapa |

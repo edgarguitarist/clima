@@ -77,6 +77,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.edgarguitarist.clima.ui.Ambar
 import com.edgarguitarist.clima.ui.Celeste
 import com.edgarguitarist.clima.ui.Fondo
+import com.edgarguitarist.clima.ui.TarjetaAire
 import com.edgarguitarist.clima.ui.TemaClima
 import com.edgarguitarist.clima.ui.TextoSec
 import kotlinx.coroutines.Dispatchers
@@ -102,6 +103,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // La app siempre es oscura: íconos claros en las barras aunque el sistema esté en modo claro.
         enableEdgeToEdge(SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
+        // Permiso de notificaciones (Android 13+) y arranque del aviso de lluvia en segundo plano.
+        val pedirNotif = registerForActivityResult(ActivityResultContracts.RequestPermission()) { programarAlertas(this) }
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) pedirNotif.launch(Manifest.permission.POST_NOTIFICATIONS) else programarAlertas(this)
         setContent { TemaClima { Surface(color = Fondo, contentColor = Color.White) { App() } } }
     }
 }
@@ -119,6 +125,7 @@ private class Estado {
     var lugares by mutableStateOf<List<Lugar>>(emptyList())
     val datosLugar = mutableStateMapOf<String, Pronostico>()
     val satLugar = mutableStateMapOf<String, Observacion?>()
+    val aire = mutableStateMapOf<String, Aire>() // por nombre de lugar; «Aquí» va con la clave AQUI
     var sel by mutableStateOf<String?>(null)
 }
 
@@ -149,6 +156,7 @@ private suspend fun cargarLugares(ctx: Context, e: Estado) = coroutineScope {
                 runCatching { parsear(j) }.onSuccess { e.datosLugar[l.nombre] = it; cacheLugares(ctx).edit().putString(l.nombre, j).apply() }
             }
             e.satLugar[l.nombre] = observarSatelite(l.lat, l.lon)
+            runCatching { descargarAire(l.lat, l.lon) }.onSuccess { e.aire[l.nombre] = it }
         }
     }.awaitAll()
 }
@@ -178,6 +186,7 @@ private fun App() {
             val json = withContext(Dispatchers.IO) { descargarPronostico(lat, lon) }
             e.datos = parsear(json)
             scope.launch { e.satelite = withContext(Dispatchers.IO) { observarSatelite(lat, lon) } }
+            scope.launch { withContext(Dispatchers.IO) { runCatching { descargarAire(lat, lon) } }.onSuccess { e.aire[AQUI] = it } }
             e.lat = lat
             e.lon = lon
             // El nombre llega después: el pronóstico ya se ve mientras el Geocoder responde.
@@ -242,6 +251,7 @@ private fun App() {
                                 e.lugares.map { FilaLugar(it.nombre, e.datosLugar[it.nombre], e.satLugar[it.nombre]) }
                             Detalle(
                                 d, lugarSel?.nombre ?: e.lugar, if (lugarSel == null) e.satelite else e.satLugar[lugarSel.nombre],
+                                e.aire[lugarSel?.nombre ?: AQUI],
                             ) { TarjetaLugares(filas, lugarSel?.nombre) { e.sel = it } }
                         }
                         Spacer(Modifier.height(24.dp))
@@ -253,6 +263,7 @@ private fun App() {
     if (hoja) HojaLugares(e.lugares, { nuevos ->
         e.lugares = nuevos
         Lugares.guardar(ctx, nuevos)
+        programarAlertas(ctx)
         if (e.sel != null && nuevos.none { it.nombre == e.sel }) e.sel = null
         scope.launch { cargarLugares(ctx, e) }
     }) { hoja = false }
@@ -341,7 +352,7 @@ private fun hora(iso: String) = iso.substring(11, 16)
 private val formatoDia = DateTimeFormatter.ofPattern("EEE d", Locale("es"))
 
 @Composable
-private fun Detalle(p: Pronostico, lugar: String, sat: Observacion?, debajo: @Composable () -> Unit = {}) {
+private fun Detalle(p: Pronostico, lugar: String, sat: Observacion?, aire: Aire?, debajo: @Composable () -> Unit = {}) {
     val a = p.actual
     val hoy = p.dias[0]
     // Encabezado
@@ -350,6 +361,11 @@ private fun Detalle(p: Pronostico, lugar: String, sat: Observacion?, debajo: @Co
         Text(icono(a.codigo, a.esDia), fontSize = 76.sp, modifier = Modifier.padding(top = 12.dp))
         Text("${r(a.temp)}°", fontSize = 104.sp, fontWeight = FontWeight.Thin, lineHeight = 104.sp)
         Text(texto(a.codigo), fontSize = 21.sp, fontWeight = FontWeight.Medium)
+        Text(
+            titular(p.cuartos, sat?.temp), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 10.dp).clip(RoundedCornerShape(14.dp)).background(Color(0x33000000))
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+        )
         Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Chip("Sensación ${r(a.sensacion)}°", Ambar)
             Chip("↑ ${r(hoy.max)}°  ↓ ${r(hoy.min)}°", Color.White)
@@ -379,6 +395,8 @@ private fun Detalle(p: Pronostico, lugar: String, sat: Observacion?, debajo: @Co
     Tarjeta("🕒  Próximas 24 horas") { Horas(p.horas) }
 
     Tarjeta("📅  Próximos 10 días") { Dias(p.dias) }
+
+    aire?.let { TarjetaAire(it) }
 
     val celdas = listOf(
         Triple("💧 Humedad", "${a.humedad}%", "Punto de rocío ${r(a.rocio)}°"),

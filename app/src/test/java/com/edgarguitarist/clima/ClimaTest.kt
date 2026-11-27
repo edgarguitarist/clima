@@ -51,6 +51,14 @@ class ClimaTest {
         assertEquals(null, lluviaAhora(0.0))
     }
 
+    @Test fun titulares() {
+        fun c(vararg mm: Double) = mm.mapIndexed { i, v -> Cuarto("2026-11-25T20:%02d".format(i * 15 % 60), v, 20) }
+        assertEquals("😎 Sin lluvia en las próximas 2 horas", titular(c(0.0, 0.0), null))
+        assertTrue(titular(c(0.0, 0.0), -70).startsWith("⛈️"))
+        assertEquals("☔ Lluvia hasta las 20:30", titular(c(0.5, 0.5, 0.0), -70))
+        assertEquals("☂️ Lluvia desde las 20:15: lleva paraguas", titular(c(0.0, 0.5), null))
+    }
+
     @Test fun iconos() {
         assertEquals("🌙", icono(0, esDia = false))
         assertEquals("🌧️", icono(80, esDia = false))

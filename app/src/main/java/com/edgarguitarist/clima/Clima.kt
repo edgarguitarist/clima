@@ -140,6 +140,19 @@ private val CODIGOS = mapOf(
     96 to ("Tormenta con granizo" to "⛈️"), 99 to ("Tormenta con granizo fuerte" to "⛈️"),
 )
 
+/** Una frase arriba de todo que responde «¿necesito paraguas?», con el satélite si ve una tormenta encima. */
+fun titular(cuartos: List<Cuarto>, topeSatelite: Int?): String {
+    val lloviendo = cuartos.firstOrNull()?.let { it.lluvia >= 0.1 } == true
+    val viene = cuartos.any { it.lluvia >= 0.1 }
+    return when {
+        !lloviendo && topeSatelite != null && topeSatelite <= -52 -> "⛈️ El satélite ve una tormenta encima: puede llover en cualquier momento"
+        lloviendo -> "☔ " + resumenLluvia(cuartos)
+        viene -> "☂️ " + resumenLluvia(cuartos) + ": lleva paraguas"
+        cuartos.any { it.prob >= 40 } -> "🌂 Puede llover: mejor lleva paraguas"
+        else -> "😎 Sin lluvia en las próximas 2 horas"
+    }
+}
+
 /** Lo que llovió en los últimos 15 min, como intensidad (escala usual: ligera < 2,5 mm/h < moderada < 7,6 < fuerte). */
 fun lluviaAhora(mm15: Double): String? {
     if (mm15 < 0.05) return null
