@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/raiz"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/fondo_widget"
+    android:padding="12dp">
+
+    <TextView
+        android:id="@+id/emoji"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentTop="true"
+        android:layout_alignParentEnd="true"
+        android:text="⛅"
+        android:textSize="30sp" />
+
+    <TextView
+        android:id="@+id/temp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentTop="true"
+        android:layout_alignParentStart="true"
+        android:text="26°"
+        android:textColor="#FFFFFF"
+        android:textSize="38sp" />
+
+    <TextView
+        android:id="@+id/lluvia"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_above="@+id/lugar"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:text="Sin lluvia 2 h"
+        android:textColor="#60A5FA"
+        android:textSize="15sp" />
+
+    <TextView
+        android:id="@+id/lugar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:text="Guayaquil"
+        android:textColor="#94A3B8"
+        android:textSize="10sp" />
+</RelativeLayout>

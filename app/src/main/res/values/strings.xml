@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">Clima</string>
     <string name="widget_descripcion">Temperatura actual, sensación térmica y lluvia próxima</string>
+    <string name="widget_chico_descripcion">¿Llueve pronto? Temperatura y lluvia en pocas palabras</string>
 </resources>
