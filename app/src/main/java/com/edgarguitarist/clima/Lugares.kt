@@ -38,11 +38,20 @@ object Lugares {
         }
     }
 
-    /** Buscador de Open-Meteo (gratis, sin key). Bloqueante: llamar desde Dispatchers.IO. */
-    fun buscar(texto: String): List<Lugar> {
+    /**
+     * Buscador de Open-Meteo (gratis, sin key). Bloqueante: llamar desde Dispatchers.IO.
+     * Ordena mal por relevancia («Durán» daba Oklahoma y Francia antes que Ecuador), así que primero se busca
+     * en el país del celular y después en el resto del mundo.
+     */
+    fun buscar(texto: String, pais: String = java.util.Locale.getDefault().country): List<Lugar> {
         val q = URLEncoder.encode(texto.trim(), "UTF-8")
-        val c = URL("https://geocoding-api.open-meteo.com/v1/search?name=$q&count=8&language=es&format=json")
-            .openConnection() as HttpURLConnection
+        val base = "https://geocoding-api.open-meteo.com/v1/search?name=$q&count=8&language=es&format=json"
+        val local = if (pais.length == 2) runCatching { pedir("$base&countryCode=$pais") }.getOrDefault(emptyList()) else emptyList()
+        return (local + pedir(base)).distinctBy { "%.2f,%.2f".format(it.lat, it.lon) }.take(10)
+    }
+
+    private fun pedir(url: String): List<Lugar> {
+        val c = URL(url).openConnection() as HttpURLConnection
         c.connectTimeout = 10_000
         c.readTimeout = 10_000
         try {
