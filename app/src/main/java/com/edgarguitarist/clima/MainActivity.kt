@@ -20,6 +20,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -243,21 +245,33 @@ private fun App() {
                 val lo = lugarSel?.lon ?: e.lon ?: GYE_LON
                 key(la, lo) { Mapa(la, lo) }
             } else {
+                // Una página por lugar: se pasa de uno a otro deslizando, y los chips de arriba saltan a la página.
+                val paginas = listOf<Lugar?>(null) + e.lugares
+                val pager = rememberPagerState(initialPage = paginas.indexOf(lugarSel).coerceAtLeast(0)) { paginas.size }
+                LaunchedEffect(pager.settledPage) { e.sel = paginas.getOrNull(pager.settledPage)?.nombre }
+                LaunchedEffect(e.sel, paginas.size) {
+                    val i = paginas.indexOfFirst { it?.nombre == e.sel }.coerceAtLeast(0)
+                    if (i != pager.currentPage) pager.animateScrollToPage(i)
+                }
+                val filas = listOf(FilaLugar(AQUI, e.datos, e.satelite)) +
+                    e.lugares.map { FilaLugar(it.nombre, e.datosLugar[it.nombre], e.satLugar[it.nombre]) }
                 PullToRefreshBox(isRefreshing = e.cargando && d != null, onRefresh = { scope.launch { cargar() } }) {
-                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-                        if (d == null) {
-                            Cargando(e.etapa, e.error)
-                        } else {
-                            if (e.error.isNotEmpty()) Aviso("No se pudo actualizar: ${e.error}. Desliza hacia abajo para reintentar.")
-                            val filas = listOf(FilaLugar(AQUI, e.datos, e.satelite)) +
-                                e.lugares.map { FilaLugar(it.nombre, e.datosLugar[it.nombre], e.satLugar[it.nombre]) }
-                            Detalle(
-                                d, lugarSel?.nombre ?: e.lugar, if (lugarSel == null) e.satelite else e.satLugar[lugarSel.nombre],
-                                e.aire[lugarSel?.nombre ?: AQUI],
-                                e.marea?.takeIf { mareaAplica(lugarSel?.lat ?: e.lat ?: GYE_LAT, lugarSel?.lon ?: e.lon ?: GYE_LON) },
-                            ) { TarjetaLugares(filas, lugarSel?.nombre) { e.sel = it } }
+                    HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { pag ->
+                        val l = paginas[pag]
+                        val dp = if (l == null) e.datos else e.datosLugar[l.nombre]
+                        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+                            if (dp == null) {
+                                Cargando(if (l == null) e.etapa else "Cargando ${l.nombre}…", if (l == null) e.error else "")
+                            } else {
+                                if (l == null && e.error.isNotEmpty()) Aviso("No se pudo actualizar: ${e.error}. Desliza hacia abajo para reintentar.")
+                                Detalle(
+                                    dp, l?.nombre ?: e.lugar, if (l == null) e.satelite else e.satLugar[l.nombre],
+                                    e.aire[l?.nombre ?: AQUI],
+                                    e.marea?.takeIf { mareaAplica(l?.lat ?: e.lat ?: GYE_LAT, l?.lon ?: e.lon ?: GYE_LON) },
+                                ) { TarjetaLugares(filas, lugarSel?.nombre) { e.sel = it } }
+                            }
+                            Spacer(Modifier.height(24.dp))
                         }
-                        Spacer(Modifier.height(24.dp))
                     }
                 }
             }
@@ -361,7 +375,7 @@ private fun Detalle(p: Pronostico, lugar: String, sat: Observacion?, aire: Aire?
     // Encabezado
     Column(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Text("📍 ${lugar.ifEmpty { "Mi ubicación" }}", fontSize = 17.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
-        Text(icono(a.codigo, a.esDia), fontSize = 76.sp, modifier = Modifier.padding(top = 12.dp))
+        Box(Modifier.padding(top = 12.dp)) { IconoTiempo(a.codigo, a.esDia, 92) }
         Text("${r(a.temp)}°", fontSize = 104.sp, fontWeight = FontWeight.Thin, lineHeight = 104.sp)
         Text(texto(a.codigo), fontSize = 21.sp, fontWeight = FontWeight.Medium)
         Text(
@@ -388,20 +402,28 @@ private fun Detalle(p: Pronostico, lugar: String, sat: Observacion?, aire: Aire?
         medido.forEach { (t, c) -> Text(t, color = c, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
     }
 
-    debajo()
+    var horaSel by remember { mutableStateOf<Hora?>(null) }
+    var diaSel by remember { mutableStateOf<Dia?>(null) }
+    horaSel?.let { HojaHora(it) { horaSel = null } }
+    diaSel?.let { HojaDia(it, p.horas) { diaSel = null } }
 
-    Tarjeta("🌧️  Lluvia · próximas 2 horas") {
-        Text(resumenLluvia(p.cuartos), fontSize = 16.sp, fontWeight = FontWeight.Medium)
-        BarrasLluvia(p.cuartos)
+    // Lo urgente sube: lluvia en camino, pleamar con lluvia o aire dañino van arriba; si no, el orden de siempre.
+    val vieneLluvia = p.cuartos.any { it.lluvia >= 0.1 || it.prob >= 40 } || (sat?.temp ?: 0) <= -52
+    val mareaUrgente = marea != null && avisoMareaLluvia(marea, p.horas) != null
+    val tarjetas = buildList<Pair<Int, @Composable () -> Unit>> {
+        add(10 to { debajo() })
+        add((if (vieneLluvia) 20 else 45) to {
+            Tarjeta("🌧️  Lluvia · próximas 2 horas") {
+                Text(resumenLluvia(p.cuartos), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                BarrasLluvia(p.cuartos)
+            }
+        })
+        marea?.let { m -> add((if (mareaUrgente) 15 else 50) to { TarjetaMarea(m, p.horas) }) }
+        add(30 to { Tarjeta("🕒  Próximas 24 horas · toca una hora") { Horas(p.horas) { horaSel = it } } })
+        add(40 to { Tarjeta("📅  Próximos 10 días · toca un día") { Dias(p.dias) { diaSel = it } } })
+        aire?.let { ai -> add((if (ai.aqi > 100) 12 else 60) to { TarjetaAire(ai) }) }
     }
-
-    marea?.let { TarjetaMarea(it, p.horas) }
-
-    Tarjeta("🕒  Próximas 24 horas") { Horas(p.horas) }
-
-    Tarjeta("📅  Próximos 10 días") { Dias(p.dias) }
-
-    aire?.let { TarjetaAire(it) }
+    tarjetas.sortedBy { it.first }.forEach { it.second() }
 
     val celdas = listOf(
         Triple("💧 Humedad", "${a.humedad}%", "Punto de rocío ${r(a.rocio)}°"),
@@ -491,7 +513,7 @@ private fun BarrasLluvia(cuartos: List<Cuarto>) {
 
 /** Las 24 horas: curva de temperatura y, debajo, la sensación térmica de cada hora. */
 @Composable
-private fun Horas(horas: List<Hora>) {
+private fun Horas(horas: List<Hora>, alTocar: (Hora) -> Unit) {
     val ancho = 58.dp
     val medidor = rememberTextMeasurer()
     // La curva usa su propio rango (mínimo 4°) para que se note la forma del día aunque varíe poco.
@@ -500,9 +522,9 @@ private fun Horas(horas: List<Hora>) {
     Column(Modifier.horizontalScroll(rememberScrollState())) {
         Row {
             horas.forEachIndexed { i, h ->
-                Column(Modifier.width(ancho), horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(Modifier.width(ancho).clickable { alTocar(h) }, horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(if (i == 0) "Ahora" else hora(h.hora), color = TextoSec, fontSize = 12.sp)
-                    Text(icono(h.codigo, esDiaAprox(h.hora)), fontSize = 24.sp, modifier = Modifier.padding(vertical = 4.dp))
+                    Box(Modifier.padding(vertical = 4.dp)) { IconoTiempo(h.codigo, esDiaAprox(h.hora), 30) }
                 }
             }
         }
@@ -558,16 +580,16 @@ private fun Horas(horas: List<Hora>) {
 private fun esDiaAprox(iso: String) = iso.substring(11, 13).toInt() in 6..17
 
 @Composable
-private fun Dias(dias: List<Dia>) {
+private fun Dias(dias: List<Dia>, alTocar: (Dia) -> Unit) {
     val min = dias.minOf { it.min }
     val max = dias.maxOf { it.max }
     dias.forEachIndexed { i, d ->
-        Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().clickable { alTocar(d) }.padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.width(64.dp)) {
                 Text(if (i == 0) "Hoy" else LocalDate.parse(d.fecha).format(formatoDia).replaceFirstChar { it.uppercase() }, fontSize = 15.sp)
                 Text("ST ${r(d.sensMax)}°", color = Ambar, fontSize = 11.sp)
             }
-            Text(icono(d.codigo), fontSize = 22.sp, modifier = Modifier.width(34.dp))
+            Box(Modifier.width(34.dp)) { IconoTiempo(d.codigo, true, 27) }
             Text(if (d.prob >= 10) "${d.prob}%" else "", color = Celeste, fontSize = 12.sp, modifier = Modifier.width(38.dp))
             Text("${r(d.min)}°", color = TextoSec, fontSize = 15.sp, textAlign = TextAlign.End, modifier = Modifier.width(34.dp))
             Canvas(Modifier.weight(1f).height(6.dp).padding(horizontal = 10.dp)) {

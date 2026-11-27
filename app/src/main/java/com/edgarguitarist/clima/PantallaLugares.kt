@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -92,7 +93,7 @@ fun TarjetaLugares(filas: List<FilaLugar>, sel: String?, elegir: (String?) -> Un
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 val a = f.datos?.actual
-                Text(if (a != null) icono(a.codigo, a.esDia) else "…", fontSize = 26.sp, modifier = Modifier.width(40.dp))
+                Box(Modifier.width(40.dp)) { if (a != null) IconoTiempo(a.codigo, a.esDia, 32) else Text("…") }
                 Column(Modifier.weight(1f)) {
                     Text(f.nombre, fontSize = 16.sp, fontWeight = FontWeight.Medium)
                     val estado = when {

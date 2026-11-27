@@ -18,19 +18,24 @@ data class Cuarto(val hora: String, val lluvia: Double, val prob: Int)
 data class Hora(
     val hora: String, val temp: Double, val sensacion: Double, val prob: Int, val lluvia: Double,
     val codigo: Int, val nubes: Int,
+    // Para el detalle al tocar una hora (con valores por defecto: hay quien construye Hora con 7 campos).
+    val humedad: Int = 0, val viento: Double = 0.0, val dirViento: Double = 0.0, val rafagas: Double = 0.0,
+    val uv: Double = 0.0, val visibilidad: Double = 0.0,
 )
 data class Dia(
     val fecha: String, val codigo: Int, val max: Double, val min: Double, val sensMax: Double,
     val sensMin: Double, val lluvia: Double, val prob: Int, val amanecer: String, val atardecer: String,
     val uvMax: Double,
+    val vientoMax: Double = 0.0, val rafagasMax: Double = 0.0, val dirViento: Double = 0.0, val horasLluvia: Double = 0.0,
 )
 data class Pronostico(val actual: Actual, val cuartos: List<Cuarto>, val horas: List<Hora>, val dias: List<Dia>)
 
 private const val ACTUAL = "temperature_2m,apparent_temperature,relative_humidity_2m,dew_point_2m,precipitation," +
     "weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m,uv_index,visibility,is_day"
-private const val HORARIO = "temperature_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,cloud_cover"
+private const val HORARIO = "temperature_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,cloud_cover," +
+    "relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,uv_index,visibility"
 private const val DIARIO = "weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max," +
-    "apparent_temperature_min,precipitation_sum,precipitation_probability_max,sunrise,sunset,uv_index_max"
+    "apparent_temperature_min,precipitation_sum,precipitation_probability_max,sunrise,sunset,uv_index_max,wind_speed_10m_max,wind_gusts_10m_max,wind_direction_10m_dominant,precipitation_hours"
 
 /** Bloqueante: llamar desde Dispatchers.IO. Devuelve el JSON tal cual, para guardarlo en caché. */
 fun descargarPronostico(lat: Double, lon: Double): String {
@@ -80,6 +85,8 @@ fun resumenLluvia(cuartos: List<Cuarto>): String {
 // Algunos modelos dejan huecos (null): se leen como 0.
 private fun JSONArray.d(i: Int) = optDouble(i).let { if (it.isNaN()) 0.0 else it }
 private fun JSONArray.n(i: Int) = d(i).roundToInt()
+// Campos agregados después: si una respuesta guardada en caché no los trae, valen 0.
+private fun JSONObject.op(k: String, i: Int) = optJSONArray(k)?.d(i) ?: 0.0
 private fun JSONObject.d(k: String) = optDouble(k).let { if (it.isNaN()) 0.0 else it }
 
 fun parsear(json: String): Pronostico {
@@ -108,6 +115,8 @@ fun parsear(json: String): Pronostico {
             ht.getString(it), h.getJSONArray("temperature_2m").d(it), h.getJSONArray("apparent_temperature").d(it),
             h.getJSONArray("precipitation_probability").n(it), h.getJSONArray("precipitation").d(it),
             h.getJSONArray("weather_code").n(it), h.getJSONArray("cloud_cover").n(it),
+            h.op("relative_humidity_2m", it).toInt(), h.op("wind_speed_10m", it), h.op("wind_direction_10m", it),
+            h.op("wind_gusts_10m", it), h.op("uv_index", it), h.op("visibility", it),
         )
     }
 
@@ -120,6 +129,8 @@ fun parsear(json: String): Pronostico {
             d.getJSONArray("apparent_temperature_min").d(it), d.getJSONArray("precipitation_sum").d(it),
             d.getJSONArray("precipitation_probability_max").n(it), d.getJSONArray("sunrise").getString(it),
             d.getJSONArray("sunset").getString(it), d.getJSONArray("uv_index_max").d(it),
+            d.op("wind_speed_10m_max", it), d.op("wind_gusts_10m_max", it), d.op("wind_direction_10m_dominant", it),
+            d.op("precipitation_hours", it),
         )
     }
     return Pronostico(actual, cuartos, horas, dias)
